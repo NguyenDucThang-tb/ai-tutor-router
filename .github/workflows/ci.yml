@@ -1,0 +1,40 @@
+name: Python CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, "feat/**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.13.5"
+          enable-cache: true
+      - name: Install project and test dependencies
+        run: uv sync --frozen --extra dev
+      - name: Compile Python sources
+        run: uv run python -m compileall -q app tests
+      - name: Lint
+        run: uv run ruff check app tests
+      - name: Test (mock only)
+        env:
+          TUTOR_ENVIRONMENT: test
+          TUTOR_PROVIDER: mock
+          TUTOR_AUTH_ENABLED: "false"
+        run: uv run pytest

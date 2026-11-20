@@ -1,53 +1,142 @@
+"""Deterministic routing baselines, independent of the API and provider gateway."""
+
+from __future__ import annotations
+
+import hashlib
+import time
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-import random
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.features import QueryFeatures
-from app.schemas import RouteDecision
+
+Tier = Literal["small", "strong"]
+RouterName = Literal["always_small", "always_strong", "random", "rule"]
+
+
+class RouteDecision(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    router_strategy: RouterName
+    selected_tier: Tier
+    selected_model_id: str
+    reason_code: str
+    decision_metadata: dict[str, Any] = Field(default_factory=dict)
+    router_latency_ms: float
 
 
 @dataclass(frozen=True)
-class RoutingConfig:
-    quality_threshold: float = 0.80
-    cost_lambda: float = 0.10
-    latency_lambda: float = 0.10
-    small_cost_usd: float = 0.0002
-    strong_cost_usd: float = 0.002
-    small_latency_ms: float = 900
-    strong_latency_ms: float = 1800
+class RouterConfig:
+    small_model_id: str
+    strong_model_id: str
+    random_small_probability: float = 0.5
+    random_seed: str = "42"
+    max_short_query_characters: int = 160
+    max_short_query_tokens: int = 30
+    max_math_symbols_for_small: int = 3
 
 
-class Router:
-    def __init__(self, name: str = "rule", config: RoutingConfig = RoutingConfig(), seed: int = 42):
-        self.name, self.config, self.rng = name, config, random.Random(seed)
+class BaseRouter(ABC):
+    name: RouterName
 
-    def decide(self, f: QueryFeatures) -> RouteDecision:
-        c = self.config
-        if self.name == "always_small":
-            return self._decision("small", 1.0, "ALWAYS_SMALL")
-        if self.name == "always_strong":
-            return self._decision("strong", 1.0, "ALWAYS_STRONG")
-        if self.name == "random":
-            tier = "small" if self.rng.random() < 0.5 else "strong"
-            return self._decision(tier, 0.5, "SEEDED_RANDOM")
-        # An interpretable rule baseline; complexity cues are combined, not keyword-only.
-        difficult = f.has_proof_request or f.has_verification_intent or f.token_count > 45 or f.char_count > 280
-        qhat = 0.55 if difficult else 0.88
-        if self.name in {"quality_aware", "ml"}:
-            # Prior-only fallback until a trained estimator artifact is supplied.
-            # Never present this as a learned prediction.
-            qhat = 0.52 if difficult else 0.84
-        quality_ok = qhat >= c.quality_threshold
-        # Explicitly scaled unit costs; these lambdas are configurable policy weights, not learned.
-        small_utility = qhat - c.cost_lambda * c.small_cost_usd - c.latency_lambda * c.small_latency_ms / 10000
-        strong_utility = 1.0 - c.cost_lambda * c.strong_cost_usd - c.latency_lambda * c.strong_latency_ms / 10000
-        choose_small = quality_ok and (self.name != "utility" or small_utility >= strong_utility)
-        tier = "small" if choose_small else "strong"
-        reason = "SMALL_MODEL_EXPECTED_SUFFICIENT" if choose_small else "QUALITY_CONSTRAINT_OR_COMPLEXITY"
-        return self._decision(tier, qhat, reason)
+    def __init__(self, config: RouterConfig):
+        self.config = config
 
-    def _decision(self, tier: str, q: float | None, reason: str) -> RouteDecision:
-        c = self.config
-        return RouteDecision(selected_strategy=tier, router_name=self.name, quality_estimate=q,
-            estimated_cost_usd=c.small_cost_usd if tier == "small" else c.strong_cost_usd,
-            estimated_latency_ms=c.small_latency_ms if tier == "small" else c.strong_latency_ms,
-            reason_code=reason)
+    @abstractmethod
+    def decide(self, features: QueryFeatures, request_id: str) -> RouteDecision:
+        """Choose a model deterministically for the supplied request ID."""
+
+    def _decision(
+        self, tier: Tier, request_id: str, reason: str, metadata: dict[str, Any], started: float
+    ) -> RouteDecision:
+        model_id = self.config.small_model_id if tier == "small" else self.config.strong_model_id
+        return RouteDecision(
+            router_strategy=self.name,
+            selected_tier=tier,
+            selected_model_id=model_id,
+            reason_code=reason,
+            decision_metadata={**metadata, "request_id": request_id},
+            router_latency_ms=(time.perf_counter() - started) * 1000,
+        )
+
+
+class AlwaysSmallRouter(BaseRouter):
+    name: RouterName = "always_small"
+
+    def decide(self, features: QueryFeatures, request_id: str) -> RouteDecision:
+        started = time.perf_counter()
+        return self._decision("small", request_id, "ALWAYS_SMALL", {}, started)
+
+
+class AlwaysStrongRouter(BaseRouter):
+    name: RouterName = "always_strong"
+
+    def decide(self, features: QueryFeatures, request_id: str) -> RouteDecision:
+        started = time.perf_counter()
+        return self._decision("strong", request_id, "ALWAYS_STRONG", {}, started)
+
+
+class RandomRouter(BaseRouter):
+    name: RouterName = "random"
+
+    def __init__(self, config: RouterConfig):
+        super().__init__(config)
+        if not 0.0 <= config.random_small_probability <= 1.0:
+            raise ValueError("random_small_probability must be between 0 and 1")
+
+    def decide(self, features: QueryFeatures, request_id: str) -> RouteDecision:
+        started = time.perf_counter()
+        material = f"{self.config.random_seed}\0{request_id}".encode()
+        value = int.from_bytes(hashlib.blake2b(material, digest_size=8).digest(), "big") / 2**64
+        tier: Tier = "small" if value < self.config.random_small_probability else "strong"
+        return self._decision(
+            tier,
+            request_id,
+            "SEEDED_REQUEST_HASH",
+            {
+                "small_probability": self.config.random_small_probability,
+                "seed": self.config.random_seed,
+                "draw": value,
+            },
+            started,
+        )
+
+
+class RuleBasedRouter(BaseRouter):
+    name: RouterName = "rule"
+
+    def decide(self, features: QueryFeatures, request_id: str) -> RouteDecision:
+        started = time.perf_counter()
+        cues = {
+            "long_query": features.char_count > self.config.max_short_query_characters
+            or features.token_count > self.config.max_short_query_tokens,
+            "proof_request": features.has_proof_request,
+            "solution_verification": features.has_verification_intent,
+            "many_math_symbols": features.math_symbol_count
+            > self.config.max_math_symbols_for_small,
+            "multi_step_request": features.requested_steps,
+            "advanced_task_type": features.task_type in {"word_problem", "guided"},
+        }
+        # Transparent conservative rules. This is a baseline and emits no quality estimate.
+        complex_query = any(cues.values())
+        tier: Tier = "strong" if complex_query else "small"
+        reason = "RULE_COMPLEXITY_CUE" if complex_query else "RULE_SHORT_DIRECT_QUERY"
+        return self._decision(tier, request_id, reason, {"matched_cues": cues}, started)
+
+
+ROUTERS: dict[str, type[BaseRouter]] = {
+    "always_small": AlwaysSmallRouter,
+    "always_strong": AlwaysStrongRouter,
+    "random": RandomRouter,
+    "rule": RuleBasedRouter,
+}
+
+
+def build_router(name: str, config: RouterConfig) -> BaseRouter:
+    try:
+        router_type = ROUTERS[name]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported router strategy: {name}") from exc
+    return router_type(config)

@@ -1,7 +1,19 @@
 # Routing policy
 
-For each request, estimate small-model sufficiency, then choose a tier under a validation-selected quality constraint. Let `q_s(x)` be the calibrated probability that the small model meets a task-specific correctness criterion for query `x`. A threshold policy selects small iff `q_s(x) >= tau`; choose `tau` on validation data to minimize average measured cost subject to a minimum correctness constraint. Keep a test set untouched until the policy is frozen.
+Phase 1 implements four routing baselines. Each returns a configured model identifier, selected tier, reason code, decision metadata, and measured policy-processing latency. No Phase 1 router emits a quality probability.
 
-The utility variant is `U_j(x) = alpha_Q * q_j(x) - alpha_C * C_j(x)/C_ref - alpha_L * L_j(x)/L_ref`, subject to `q_j(x) >= q_min`. Quality is a probability, cost and latency are normalized against documented reference scales. This avoids adding raw USD and milliseconds as if they shared units. Any weights, thresholds, and references are configuration artifacts selected on validation only.
+## Always-small and always-strong
 
-The initial code has interpretable rule features and a deliberately labeled heuristic prior. `quality_aware` and `ml` names are scaffolding, not trained estimators; no quality probability is currently calibrated. Production decisions must include observed usage/latency and model/version/prompt identifiers, with estimated prices kept separate from provider-reported usage.
+These route every validated request to the configured small or strong model, respectively.
+
+## Random
+
+For reproducible independent routing, compute a BLAKE2b digest of `seed + NUL + request_id`, map its 64-bit value to [0,1), and compare against `random_small_probability`. The same seed and request ID replay the same tier, independent of call order, concurrency, or global RNG state. The probability is configurable from zero to one.
+
+## Rule baseline
+
+Choose strong if any complexity cue is true: query character/token threshold exceeded, proof request, solution-check intent, math-symbol count above threshold, requested steps, or `word_problem`/`guided` task. Otherwise choose small. Threshold boundaries and cues have unit tests. The rules are a transparent baseline, not a learned quality estimate.
+
+## Future learned policy
+
+A future model may estimate small-model sufficiency and select thresholds on validation data. It must report calibration and task-segment risk, keep test data untouched during tuning, and attach provenance to model, prompt, labels, cost, and latency. Cost and latency estimates are intentionally absent from Phase 1 decisions because no supported measurements/prices exist.

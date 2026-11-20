@@ -1,30 +1,50 @@
+from __future__ import annotations
+
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.gateway import CostInfo, ExecutionAttempt, UsageInfo
+from app.routing import RouteDecision
 
 
 class TutorRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     question: str = Field(min_length=1, max_length=12000)
     task_type: Literal["math", "algebra", "word_problem", "verification", "guided"] = "math"
     mode: Literal["auto", "direct", "guided", "verify"] = "auto"
-    student_level: Literal["middle_school", "high_school", "undergraduate", "unspecified"] = "unspecified"
-
-
-class RouteDecision(BaseModel):
-    selected_strategy: Literal["small", "strong"]
-    router_name: str
-    quality_estimate: float | None = None
-    estimated_cost_usd: float | None = None
-    estimated_latency_ms: float | None = None
-    reason_code: str
+    student_level: Literal["middle_school", "high_school", "undergraduate", "unspecified"] = (
+        "unspecified"
+    )
 
 
 class TutorResponse(BaseModel):
     request_id: str
     answer: str
-    route: RouteDecision
-    model: str
-    usage: dict[str, int] = Field(default_factory=dict)
-    cost_usd: float | None = None
-    latency_ms: float
+    selected_tier: Literal["small", "strong"]
+    selected_model_id: str
+    executed_model_id: str
+    router: RouteDecision
+    provider: Literal["mock", "litellm"]
+    router_latency_ms: float
+    gateway_latency_ms: float
+    total_latency_ms: float
+    usage: UsageInfo | None
+    cost: CostInfo
+    final_attempt_cost: CostInfo
+    attempts: list[ExecutionAttempt]
     prompt_version: str = "tutor-v1"
+
+
+class ErrorBody(BaseModel):
+    code: str
+    message: str
+    request_id: str
+
+
+class ErrorResponse(BaseModel):
+    error: ErrorBody
+    attempts: list[ExecutionAttempt] | None = None
+    cost: CostInfo | None = None
+    final_attempt_cost: CostInfo | None = None

@@ -9,6 +9,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.py[cod]
+*.egg-info/
 *.log
 logs/
 .DS_Store
