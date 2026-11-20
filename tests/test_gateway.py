@@ -130,6 +130,17 @@ def test_retry_exhaustion_has_bounded_attempts():
         asyncio.run(LiteLLMGateway("key", completion=fake).complete(req()))
     assert raised.value.category == ErrorCategory.TEMPORARY_PROVIDER_FAILURE
     assert len(raised.value.attempts) == len(fake.calls) == 2
+    assert raised.value.cost.unknown_attempt_count == 2
+
+
+def test_all_attempts_failing_preserves_aggregate_and_last_attempt_cost():
+    fake = FakeCompletion([ChargedServiceUnavailable(), ChargedServiceUnavailable()])
+    with pytest.raises(GatewayError) as raised:
+        asyncio.run(LiteLLMGateway("key", completion=fake).complete(req()))
+    assert len(raised.value.attempts) == 2
+    assert raised.value.cost.calculated_usd == 0.002
+    assert raised.value.cost.attempt_count == 2
+    assert raised.value.final_attempt_cost.calculated_usd == 0.001
 
 
 def test_failed_attempt_usage_and_cost_are_retained():
@@ -139,6 +150,45 @@ def test_failed_attempt_usage_and_cost_are_retained():
     attempt = raised.value.attempts[0]
     assert attempt.usage.total_tokens == 5
     assert attempt.cost.calculated_usd == 0.001
+
+
+def test_paid_failed_attempt_cost_is_included_in_success_aggregate():
+    fake = FakeCompletion([ChargedServiceUnavailable(), response(cost=0.004)])
+    result = asyncio.run(LiteLLMGateway("key", completion=fake).complete(req()))
+    assert result.cost.calculated_usd == 0.005
+    assert result.cost.known_calculated_usd == 0.005
+    assert result.cost.attempt_count == 2
+    assert result.cost.unknown_attempt_count == 0
+    assert result.final_attempt_cost.calculated_usd == 0.004
+
+
+def test_retry_then_fallback_aggregates_every_attempt_cost():
+    fake = FakeCompletion(
+        [ChargedServiceUnavailable(), ChargedServiceUnavailable(), response(cost=0.006)]
+    )
+    result = asyncio.run(
+        LiteLLMGateway("key", completion=fake).complete(
+            req(max_retries=1, fallback_model_identifier="provider/backup")
+        )
+    )
+    assert [call["model"] for call in fake.calls] == [
+        "provider/small",
+        "provider/small",
+        "provider/backup",
+    ]
+    assert result.cost.calculated_usd == pytest.approx(0.008)
+    assert result.final_attempt_cost.calculated_usd == 0.006
+    assert result.cost.attempt_count == 3
+
+
+def test_unknown_attempt_cost_keeps_partial_total_uncertain():
+    fake = FakeCompletion([ChargedServiceUnavailable(), response(cost=None)])
+    result = asyncio.run(LiteLLMGateway("key", completion=fake).complete(req()))
+    assert result.cost.status == "partial"
+    assert result.cost.calculated_usd is None
+    assert result.cost.known_calculated_usd == 0.001
+    assert result.cost.unknown_attempt_count == 1
+    assert result.final_attempt_cost.status == "unknown"
 
 
 def test_fallback_is_separate_single_attempt():

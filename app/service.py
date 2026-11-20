@@ -90,6 +90,7 @@ class TutorService:
             total_latency_ms=total_latency,
             usage=result.usage,
             cost=result.cost,
+            final_attempt_cost=result.final_attempt_cost,
             attempts=list(result.attempts),
         )
 

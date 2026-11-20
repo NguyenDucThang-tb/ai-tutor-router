@@ -4,6 +4,7 @@ import json
 import re
 import time
 import uuid
+from collections import deque
 
 from app.rate_limit import InMemoryRateLimiter
 
@@ -52,6 +53,7 @@ class RequestContextMiddleware:
             if length.isdigit() and int(length) > self.max_body_bytes:
                 await reject(413, "request_too_large", "Request body is too large")
                 return
+
             client = scope.get("client")
             client_host = str(client[0]) if client else "unknown"
             if not self.limiter.allow(client_host):
@@ -63,6 +65,47 @@ class RequestContextMiddleware:
                 )
                 return
 
+            # Read the complete bounded body before parsing. Otherwise a parser may
+            # stop on malformed early bytes and leave an oversized stream unread.
+            request_body = bytearray()
+            saw_request = False
+            body_complete = False
+            disconnected = False
+            while not body_complete and not disconnected:
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    disconnected = True
+                    break
+                if message["type"] != "http.request":
+                    continue
+                saw_request = True
+                request_body.extend(message.get("body", b""))
+                if len(request_body) > self.max_body_bytes:
+                    await reject(413, "request_too_large", "Request body is too large")
+                    return
+                body_complete = not message.get("more_body", False)
+
+            replay = deque()
+            if saw_request:
+                replay.append(
+                    {
+                        "type": "http.request",
+                        "body": bytes(request_body),
+                        "more_body": disconnected,
+                    }
+                )
+            if disconnected:
+                replay.append({"type": "http.disconnect"})
+
+            async def replay_receive():
+                if replay:
+                    return replay.popleft()
+                return await receive()
+
+            request_receive = replay_receive
+        else:
+            request_receive = receive
+
         async def send_with_request_id(message):
             if message["type"] == "http.response.start":
                 response_headers = list(message.get("headers", []))
@@ -70,4 +113,4 @@ class RequestContextMiddleware:
                 message["headers"] = response_headers
             await send(message)
 
-        await self.app(scope, receive, send_with_request_id)
+        await self.app(scope, request_receive, send_with_request_id)

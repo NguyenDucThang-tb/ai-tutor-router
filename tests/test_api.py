@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -50,6 +51,51 @@ def request(app, method, path, **kwargs):
             return await client.request(method, path, **kwargs)
 
     return asyncio.run(run())
+
+
+def streamed_request(app, chunks, headers=()):
+    async def run():
+        messages = iter(
+            [
+                {
+                    "type": "http.request",
+                    "body": chunk,
+                    "more_body": index < len(chunks) - 1,
+                }
+                for index, chunk in enumerate(chunks)
+            ]
+        )
+        sent = []
+
+        async def receive():
+            return next(messages, {"type": "http.disconnect"})
+
+        async def send(message):
+            sent.append(message)
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/v1/tutor/ask",
+            "raw_path": b"/v1/tutor/ask",
+            "query_string": b"",
+            "headers": [(b"content-type", b"application/json"), *headers],
+            "client": ("127.0.0.1", 1234),
+            "server": ("test", 80),
+            "state": {},
+        }
+        await app(scope, receive, send)
+        response_start = next(item for item in sent if item["type"] == "http.response.start")
+        body = b"".join(
+            item.get("body", b"") for item in sent if item["type"] == "http.response.body"
+        )
+        return response_start, body
+
+    start, body = asyncio.run(run())
+    return start["status"], dict(start["headers"]), body
 
 
 def test_health_strategies_and_ready_do_not_call_provider():
@@ -136,6 +182,40 @@ def test_oversized_http_body_is_rejected_before_parsing():
     assert response.json()["error"]["code"] == "request_too_large"
 
 
+def test_http_body_at_exact_limit_is_accepted():
+    body = b'{"question":"ok"}'
+    body += b" " * (65536 - len(body))
+    response = request(
+        make_app(),
+        "POST",
+        "/v1/tutor/ask",
+        content=body,
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("content_length", [None, b"1"])
+def test_streamed_oversized_body_is_rejected_without_trusting_content_length(content_length):
+    headers = [(b"content-length", content_length)] if content_length is not None else []
+    status, response_headers, body = streamed_request(
+        make_app(), [b"x" * 32000, b"y" * 32000, b"z" * 2000], headers
+    )
+    assert status == 413
+    assert response_headers[b"x-request-id"]
+    assert b'"code": "request_too_large"' in body
+
+
+def test_streamed_body_without_content_length_is_replayed_to_fastapi():
+    status, response_headers, body = streamed_request(
+        make_app(), [b'{"question":', b'"2+2",', b'"mode":"direct"}']
+    )
+    assert status == 200
+    payload = json.loads(body)
+    assert payload["answer"] == "MOCK RESPONSE"
+    assert response_headers[b"x-request-id"].decode() == payload["request_id"]
+
+
 def test_rate_limit_is_process_local_and_returns_429():
     app = make_app(settings=make_settings(rate_limit_requests_per_minute=1))
     assert request(app, "POST", "/v1/tutor/ask", json={"question": "2+2"}).status_code == 200
@@ -175,7 +255,13 @@ def test_failed_provider_attempt_metadata_is_preserved_in_error():
         cost=CostInfo(status="available", calculated_usd=0.002, source="litellm_calculated"),
     )
     gateway = FakeGateway(
-        GatewayError(ErrorCategory.RATE_LIMIT, "private provider text", (attempt,))
+        GatewayError(
+            ErrorCategory.RATE_LIMIT,
+            "private provider text",
+            (attempt,),
+            CostInfo(status="available", calculated_usd=0.002, attempt_count=1),
+            attempt.cost,
+        )
     )
     response = request(
         make_app(gateway=gateway),
@@ -188,6 +274,8 @@ def test_failed_provider_attempt_metadata_is_preserved_in_error():
     failed = response.json()["attempts"][0]
     assert failed["usage"]["total_tokens"] == 11
     assert failed["cost"]["calculated_usd"] == 0.002
+    assert response.json()["cost"]["calculated_usd"] == 0.002
+    assert response.json()["final_attempt_cost"]["calculated_usd"] == 0.002
     assert failed["error_category"] == "rate_limit"
     assert "private provider text" not in response.text
 

@@ -16,10 +16,14 @@ class ErrorCategory(StrEnum):
 
 
 class GatewayError(Exception):
-    def __init__(self, category: ErrorCategory, message: str, attempts=()):
+    def __init__(
+        self, category: ErrorCategory, message: str, attempts=(), cost=None, final_attempt_cost=None
+    ):
         super().__init__(message)
         self.category = category
         self.attempts = tuple(attempts)
+        self.cost = cost
+        self.final_attempt_cost = final_attempt_cost
 
 
 class ProviderCallError(Exception):

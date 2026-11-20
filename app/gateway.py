@@ -30,6 +30,12 @@ class CostInfo:
     provider_reported_usd: float | None = None
     actual_billed_usd: float | None = None
     source: str | None = None
+    known_estimated_usd: float | None = None
+    known_calculated_usd: float | None = None
+    known_provider_reported_usd: float | None = None
+    known_actual_billed_usd: float | None = None
+    attempt_count: int = 0
+    unknown_attempt_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,50 @@ class GatewayResult:
     cost: CostInfo
     latency_ms: float
     attempts: tuple[ExecutionAttempt, ...]
+    final_attempt_cost: CostInfo = field(default_factory=CostInfo)
+
+
+def aggregate_attempt_costs(
+    attempts: tuple[ExecutionAttempt, ...] | list[ExecutionAttempt],
+) -> CostInfo:
+    """Return complete totals plus known subtotals and explicit missing-cost counts."""
+    if not attempts:
+        return CostInfo()
+
+    fields = (
+        ("estimated_usd", "known_estimated_usd"),
+        ("calculated_usd", "known_calculated_usd"),
+        ("provider_reported_usd", "known_provider_reported_usd"),
+        ("actual_billed_usd", "known_actual_billed_usd"),
+    )
+    totals: dict[str, float | None] = {}
+    known_totals: dict[str, float | None] = {}
+    for field_name, known_name in fields:
+        values = [getattr(attempt.cost, field_name) for attempt in attempts]
+        known = [float(value) for value in values if value is not None]
+        totals[field_name] = sum(known) if len(known) == len(attempts) else None
+        known_totals[known_name] = sum(known) if known else None
+
+    calculated_values = [attempt.cost.calculated_usd for attempt in attempts]
+    known_calculated_count = sum(value is not None for value in calculated_values)
+    unknown_count = len(attempts) - known_calculated_count
+    status = (
+        "available" if unknown_count == 0 else "partial" if known_calculated_count else "unknown"
+    )
+    sources = [attempt.cost.source for attempt in attempts]
+    source = (
+        f"aggregate:{sources[0]}"
+        if sources[0] is not None and all(value == sources[0] for value in sources)
+        else None
+    )
+    return CostInfo(
+        status=status,
+        **totals,
+        **known_totals,
+        attempt_count=len(attempts),
+        unknown_attempt_count=unknown_count,
+        source=source,
+    )
 
 
 class Gateway(Protocol):
@@ -102,9 +152,10 @@ class MockGateway:
             model_identifier=request.model_identifier,
             provider=self.provider,
             usage=None,
-            cost=CostInfo(),
+            cost=aggregate_attempt_costs((attempt,)),
             latency_ms=(time.perf_counter() - start) * 1000,
             attempts=(attempt,),
+            final_attempt_cost=attempt.cost,
         )
 
 
@@ -181,9 +232,10 @@ class LiteLLMGateway:
                         model_identifier=executed_model,
                         provider=self.provider,
                         usage=usage,
-                        cost=cost,
+                        cost=aggregate_attempt_costs(attempts),
                         latency_ms=(time.perf_counter() - started) * 1000,
                         attempts=tuple(attempts),
+                        final_attempt_cost=cost,
                     )
                 except GatewayError:
                     raise
@@ -245,9 +297,21 @@ class LiteLLMGateway:
                     )
                     if can_fallback:
                         break
-                    raise GatewayError(categorized, categorized.value, attempts) from None
+                    raise GatewayError(
+                        categorized,
+                        categorized.value,
+                        attempts,
+                        aggregate_attempt_costs(attempts),
+                        attempts[-1].cost if attempts else None,
+                    ) from None
         category = attempts[-1].error_category or ErrorCategory.TEMPORARY_PROVIDER_FAILURE
-        raise GatewayError(category, category.value, attempts)
+        raise GatewayError(
+            category,
+            category.value,
+            attempts,
+            aggregate_attempt_costs(attempts),
+            attempts[-1].cost if attempts else None,
+        )
 
     async def _invoke(self, model: str, request: GatewayRequest) -> Any:
         kwargs: dict[str, Any] = {

@@ -14,7 +14,7 @@ Client → request-ID/body/rate-limit middleware → FastAPI validation/auth →
 
 - Always-small, always-strong, deterministic random, and rule-based routers.
 - Async deterministic mock gateway and a LiteLLM `acompletion` adapter.
-- Typed settings, fail-closed production config, bearer auth, process-local rate limiting, request IDs, structured errors, and JSON logs.
+- Typed settings, fail-closed production config, bearer auth, bounded process-local rate limiting, request IDs, structured errors, and JSON logs. The tutor endpoint enforces a 65,536-byte request cap while reading streamed bodies.
 - Bounded retries for transient errors and at most one configured fallback attempt.
 - Mock-only unit and API tests, GitHub Actions workflow, and Docker/Compose files.
 
@@ -36,9 +36,9 @@ Copy `.env.example` to `.env` for local settings. The default provider is the cr
 
 Choose `TUTOR_ROUTER_STRATEGY` from `always_small`, `always_strong`, `random`, or `rule`. Random routing hashes the configured seed and request ID, so the same request ID deterministically replays the same tier without a shared RNG. Rule routing uses documented feature cues and emits no quality probability.
 
-LiteLLM calls pass `num_retries=0` and `max_retries=0`; the adapter owns one retry loop, limited to rate limits, timeouts, and transient provider failures. Authentication and malformed-response errors are not retried. An optional fallback model is tried once after primary retries are exhausted. Each attempt is included in response metadata.
+LiteLLM calls pass `num_retries=0` and `max_retries=0`; the adapter owns one retry loop, limited to rate limits, timeouts, and transient provider failures. Authentication and malformed-response errors are not retried. An optional fallback model is tried once after primary retries are exhausted. Each attempt and its cost is included in response metadata; aggregate cost and the final attempt's cost are reported separately. Aggregate totals are null when any attempt's corresponding cost is unknown, with known subtotals and missing-attempt counts retained.
 
-The rate limiter uses an in-memory sliding window keyed by client IP and is process-local; it is not shared among workers. Logs omit question text, bearer credentials, and provider exception bodies. Latency separates router processing, gateway, individual attempts, and total request time.
+The rate limiter uses an in-memory sliding window keyed by client IP and is process-local; it is not shared among workers. It stores up to 4,096 client windows plus one shared overflow window for excess unique keys, preserving a limit under high cardinality. Logs omit question text, bearer credentials, and provider exception bodies. Latency separates router processing, gateway, individual attempts, and total request time.
 
 If `TUTOR_PER_REQUEST_BUDGET_USD` is configured, real provider requests fail closed because Phase 1 has no verified token/pricing estimator. This prevents an unknown estimate from being treated as zero; it is not dynamic budget optimization. LiteLLM-calculated cost is labeled separately from provider-reported usage and actual billed cost. Actual billing remains unknown unless supplied by a provider.
 

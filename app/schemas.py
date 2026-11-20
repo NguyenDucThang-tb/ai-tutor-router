@@ -32,6 +32,7 @@ class TutorResponse(BaseModel):
     total_latency_ms: float
     usage: UsageInfo | None
     cost: CostInfo
+    final_attempt_cost: CostInfo
     attempts: list[ExecutionAttempt]
     prompt_version: str = "tutor-v1"
 
@@ -45,3 +46,5 @@ class ErrorBody(BaseModel):
 class ErrorResponse(BaseModel):
     error: ErrorBody
     attempts: list[ExecutionAttempt] | None = None
+    cost: CostInfo | None = None
+    final_attempt_cost: CostInfo | None = None

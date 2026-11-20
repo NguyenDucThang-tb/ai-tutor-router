@@ -97,6 +97,8 @@ def create_app(settings: Settings | None = None, gateway: Gateway | None = None)
                 "request_id": getattr(request.state, "request_id", "unknown"),
             },
             attempts=list(exc.attempts),
+            cost=exc.cost,
+            final_attempt_cost=exc.final_attempt_cost,
         )
         return JSONResponse(
             status_code=status,
