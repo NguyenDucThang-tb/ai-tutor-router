@@ -1,0 +1,9 @@
+# Methodology (planned)
+
+1. Obtain GSM8K and, if permitted, MATH from their canonical sources; inspect license/access terms before collection. Keep provenance, versions, IDs, and untouched official test sets. Split only training material into train/validation using seed 42 and deduplicate exact and near-identical questions before splitting. Maintain a separately curated tutoring set with documented authoring and review.
+2. Freeze task-specific evaluation: normalized final answer for supported math outcomes, deterministic SymPy checks only for supported symbolic forms, and a separate blinded instructional rubric. Keep correctness distinct from explanation quality.
+3. Collect small-model training/validation responses with model, prompt, usage, cost, and latency metadata. Label sufficiency using pre-registered criteria. Train TF-IDF/logistic and sentence-embedding/light classifier on training labels; fit calibration and choose threshold/utility weights only on validation. No test responses feed training or policy selection.
+4. On held-out paired questions compare always-small, always-strong, seeded random, interpretable rules, learned ML, quality-aware threshold, and quality-aware plus adaptive chaining. Freeze prompts/model versions and log router features/time, model calls, provider usage, estimates separately from billed amounts, verification status, retries, fallbacks, and end-to-end time.
+5. Report accuracy and rubric score, cost/query and projected cost/1,000 queries, input/output tokens, P50/P95 latency, small share, confusion matrix, Brier score, calibration curve/ECE, fallback rate, verification success, and task-difficulty slices. Use paired bootstrap intervals, Pareto analysis, and failure-case review.
+
+Licensing, model availability, evaluator validity, contamination, sampling, API price changes, and subjective rubric ratings are threats. Any synthetic/mock output is excluded from scientific quality claims.

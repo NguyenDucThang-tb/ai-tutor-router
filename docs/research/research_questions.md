@@ -1,0 +1,9 @@
+# Research questions and hypotheses
+
+| RQ | Hypothesis to test (not an expected finding) | Independent variables | Dependent variables | Controls and analysis |
+|---|---|---|---|---|
+| RQ1 Routing effectiveness | At a validation-selected quality floor, a learned quality-aware router lowers cost/query versus rule routing without a practically unacceptable drop in correctness or tutoring rubric score. | Router strategy, threshold, task category | Correctness, rubric score, cost, small-tier rate, risk/coverage | Same queries, prompts, candidate model versions; paired bootstrap CIs; threshold fixed before test |
+| RQ2 Quality/cost/latency | Router policies occupy different quality-cost-latency trade-offs, and some may be Pareto-efficient. | Policy and model tier | Correctness, instructional score, USD/query, P50/P95 end-to-end latency, tokens | Same request order/concurrency/warm-up policy; report overhead and provider usage; paired bootstrap |
+| RQ3 Adaptive chaining | Adaptive solve–verify–explain improves measured tutoring outcome over direct-only on selected categories enough to justify extra calls/cost/latency. | Direct-only, always-chain, adaptive-chain | Correctness, rubric, invocation count, cost, latency, verification status | Same candidate models and questions; deterministic checks where supported; paired comparison and task-stratified intervals |
+
+Controls: frozen prompts and versions per experiment, fixed data split/seed, no test-set threshold tuning, same serving region and concurrency where practical, no undisclosed caching, and logged retries. Use paired bootstrap confidence intervals for mean differences and percentile metrics; report effect sizes and practical margins, not p-values alone. Human rubric judgments should use a published rubric, blinded raters where possible, inter-rater agreement, and adjudication policy.
