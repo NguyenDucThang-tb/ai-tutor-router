@@ -2,25 +2,34 @@
 
 ## Phase 0 — Research and architecture: COMPLETE (initial focused review)
 
-Created the literature review, comparison, gap, research questions, methodology, architecture, routing policy, benchmark protocol, references, limitations, and milestone-level status. The review is focused rather than systematic. Candidate model pair selection is deferred until provider access, budget, and desired deployment constraints are known; no unsubstantiated model pair is fixed.
+Created the literature review, comparison, gap, research questions, methodology, architecture, routing policy, benchmark protocol, references, limitations, and milestone status. The review is focused rather than systematic. Candidate model pair selection is deferred until provider access, budget, and deployment constraints are known.
 
-## Phase 1 — Baseline infrastructure: PARTIAL
+## Phase 1 — Baseline infrastructure: IMPLEMENTED / AWAITING REMOTE CI
 
-Implemented a FastAPI application skeleton, request/response schemas, standalone query features and routing policy, deterministic mock gateway, health/strategy endpoints, optional bearer authentication, and baseline unit tests. Missing: bounded retry/fallback, rate limiting, structured logging, production secret/config management, tested API lifecycle, and a real LiteLLM adapter. The mock is not an LLM and does not answer math questions.
+Implemented four deterministic routers, feature extraction, typed decisions, async mock and LiteLLM gateways, typed settings, FastAPI endpoints, request IDs, structured errors, bearer authentication, process-local rate limiting, JSON logs, bounded retry/fallback, tests, GitHub Actions, and Docker configuration. The mock is a transport stub, not an LLM, and does not answer math questions.
+
+The LiteLLM adapter uses async `acompletion` and sets `num_retries=0` and `max_retries=0`, so its own bounded retry loop is the only retry loop. It retries rate-limit, timeout, and temporary failures; authentication and invalid responses stop immediately. At most one configured fallback model gets one attempt. Every attempt is returned in response metadata. Adapter calls were tested using an injected async mock; no paid API call was made.
+
+If a per-request budget is set, real calls fail closed because no validated token/pricing estimator exists. This is not dynamic budget optimization. LiteLLM-calculated cost is not provider billing; actual billed cost remains unknown unless supplied by a provider.
+
+Authentication is explicitly disabled in development/test defaults. When enabled, a non-empty bearer token is required. Production rejects mock mode and requires auth and LiteLLM credentials. Rate limiting is in-memory and process-local, not shared across workers.
 
 ## Verification performed
 
-- `python3 -m py_compile app/*.py tests/*.py` — passed (syntax compilation only).
-- `python3 -m pytest` — could not start: system Python has no pytest module.
-- `python3 -m pip install -e '.[dev]'` in an isolated `/tmp` virtual environment — blocked while resolving build dependencies because package-index DNS/network access failed (`setuptools>=69` unavailable).
-- No model/API call, dataset run, benchmark, or scientific measurement was performed.
+- `uv lock` — passed; `uv.lock` records exact resolved dependencies.
+- `uv sync --extra dev` — passed in the project-local ignored `.venv` on Python 3.12.
+- `uv run pytest -q` — 51 passed (mock gateway and mocked LiteLLM calls; no paid API).
+- `uv run python -m compileall -q app tests` — passed.
+- `uv run ruff check app tests` and `uv run ruff format --check app tests` — passed.
+- `uv lock --check` and `docker compose config --quiet` — passed.
+- `docker build -t ai-tutor-router:phase1 .` — passed. Container smoke check reached Docker `healthy`; `/health/ready` and `/v1/router/strategies` returned the expected mock responses.
+- GitHub Actions is configured; remote CI on the final phase PR head is still pending.
+- No real model/API call, dataset run, benchmark, or scientific measurement was performed.
 
 ## Next gates
 
-1. Install project/dev dependencies in an environment with package access and run unit/integration tests.
-2. Complete Phase 1 reliability behavior and mock API lifecycle before claiming a runnable service.
-3. Review GSM8K/MATH access/license terms and implement provenance-preserving ingestion/splitting before collecting any model labels.
-4. Implement learned-router training and validation-only calibration; do not tune on test data.
-5. Add prompt versioning, deterministic verification states, and adaptive chains before comparative experiments.
+1. Verify GitHub Actions on the exact PR head.
+3. Only use a real provider after credentials, model IDs, and pricing provenance are reviewed.
+4. Later phases may implement dataset ingestion, learned routing, and prompt chains; preserve train/validation/test boundaries.
 
-Current readiness: research plan and code scaffold are reviewable; the service is not yet verified executable in this environment, and no scientific conclusion is available.
+Current readiness: local mock functionality, 51 tests, and Docker build/runtime are verified. Phase 1 is ready for review while remote CI completes. No scientific conclusion is available.

@@ -9,12 +9,13 @@ description = "Research prototype for quality-aware model routing in mathematics
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1", "pydantic>=2.8,<3",
-  "litellm>=1.48,<2", "sympy>=1.13,<2", "scikit-learn>=1.5,<2",
-  "pandas>=2.2,<3", "numpy>=2.0,<3", "python-dotenv>=1,<2"
+  "pydantic-settings>=2.5,<3",
+  "litellm>=1.48,<2", "python-dotenv>=1,<2"
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.3,<9", "httpx>=0.27,<1", "ruff>=0.6,<1"]
+research = ["sympy>=1.13,<2", "scikit-learn>=1.5,<2", "pandas>=2.2,<3", "numpy>=2.0,<3"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
