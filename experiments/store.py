@@ -169,10 +169,15 @@ class RunStore:
             elif row["manifest_hash"] != manifest_hash:
                 previous = json.loads(row["manifest_json"])
                 current = manifest.model_dump(mode="json")
-                if row["manifest_hash"] != _legacy_manifest_hash(
-                    previous
-                ) or _manifest_compatibility_hash(previous) != _manifest_compatibility_hash(
-                    current
+                if (
+                    manifest_hash != _legacy_manifest_hash_without_commit(current)
+                    or row["manifest_hash"]
+                    not in {
+                        _legacy_manifest_hash(previous),
+                        _legacy_manifest_hash_without_commit(previous),
+                    }
+                    or _manifest_compatibility_hash(previous)
+                    != _manifest_compatibility_hash(current)
                 ):
                     connection.rollback()
                     raise ValueError("run ID already exists with a mismatched manifest")
@@ -756,6 +761,15 @@ def _manifest_compatibility_hash(material: dict) -> str:
     compatible.pop("allow_paid_retries", None)
     compatible.pop("paid_retry_approval_id", None)
     compatible.pop("git_commit_sha", None)
+    # Normalize fields added with plan binding so pre-plan Phase 2 manifests
+    # remain compatible with their explicit legacy selection semantics.
+    compatible.setdefault("source_dataset_content_sha256", None)
+    compatible.setdefault("collection_plan_schema_version", None)
+    compatible.setdefault("collection_plan_sha256", None)
+    compatible.setdefault("collection_plan_sample_ids", [])
+    compatible.setdefault("collection_plan_sample_ids_sha256", None)
+    compatible.setdefault("collection_plan_split", None)
+    compatible.setdefault("selection_policy", "legacy_sorted_prefix_v1")
     return hashlib.sha256(
         json.dumps(compatible, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
@@ -764,6 +778,15 @@ def _manifest_compatibility_hash(material: dict) -> str:
 def _legacy_manifest_hash(material: dict) -> str:
     legacy = dict(material)
     legacy.pop("created_at_utc", None)
+    return hashlib.sha256(
+        json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _legacy_manifest_hash_without_commit(material: dict) -> str:
+    legacy = dict(material)
+    legacy.pop("created_at_utc", None)
+    legacy.pop("git_commit_sha", None)
     return hashlib.sha256(
         json.dumps(legacy, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()

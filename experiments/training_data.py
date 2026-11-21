@@ -13,8 +13,9 @@ from datasets import gsm8k
 from datasets.provenance import sha256_records
 from datasets.schemas import DatasetManifest
 from datasets.validation import load_processed_dataset
-from evaluation.evaluator import EVALUATOR_VERSION
+from evaluation.evaluator import EVALUATOR_VERSION, evaluate_answer
 from experiments.analysis import load_records
+from experiments.collection_plan import validate_collection_plan
 from experiments.model_catalog import resolve_model
 from experiments.prompts import PROMPT_SHA256
 
@@ -40,6 +41,7 @@ def _valid_real_output(record, sample, manifest) -> bool:
         and record.model_output
         and record.evaluation is not None
         and record.evaluation_complete
+        and record.evaluation == evaluate_answer(record.model_output or "", sample.reference_answer)
         and record.prompt_sha256 == PROMPT_SHA256
         and record.evaluator_version == EVALUATOR_VERSION
         and record.provenance.get("dataset") == manifest.dataset
@@ -79,12 +81,37 @@ def _verified_source(manifest) -> bool:
     )
 
 
-def export_training_data(records, dataset_records, dataset_manifest, output_dir: Path) -> dict:
+def export_training_data(
+    records, dataset_records, dataset_manifest, output_dir: Path, collection_plan=None
+) -> dict:
     if sha256_records(dataset_records) != dataset_manifest.dataset_content_sha256:
         raise ValueError("loaded dataset records do not match the source manifest checksum")
     run_ids = {record.run_id for record in records}
     if len(run_ids) > 1:
         raise ValueError("training export accepts one frozen source run at a time")
+    plan_sha256s = {
+        record.provenance.get("collection_plan_sha256")
+        for record in records
+        if record.provenance.get("collection_plan_sha256") is not None
+    }
+    planned_records = any(
+        record.provenance.get("selection_policy") == "versioned_collection_plan_v1"
+        for record in records
+    )
+    if planned_records and collection_plan is None:
+        raise ValueError("planned run records require the source collection plan for export")
+    plan_data = None
+    if collection_plan is not None:
+        if isinstance(collection_plan, Path):
+            plan_data = json.loads(collection_plan.read_text("utf-8"))
+        else:
+            plan_data = collection_plan
+        planned_rows = validate_collection_plan(plan_data, dataset_records, dataset_manifest)
+        if not planned_records or plan_sha256s != {plan_data.get("plan_sha256")}:
+            raise ValueError("source collection plan does not match run record provenance")
+        allowed_ids = {row.sample_id for row in planned_rows}
+        if any(record.sample_id not in allowed_ids for record in records):
+            raise ValueError("run record sample ID is outside its source collection plan")
     by_id = {row.sample_id: row for row in dataset_records}
     output_dir.mkdir(parents=True, exist_ok=True)
     files: dict[str, list[dict]] = {"train": [], "validation": [], "unknown": []}
@@ -122,6 +149,7 @@ def export_training_data(records, dataset_records, dataset_manifest, output_dir:
             "small_model_identifier": record.requested_model_identifier,
             "source_run_id": record.run_id,
             "source_evaluator_version": record.evaluator_version,
+            "source_collection_plan_sha256": record.provenance.get("collection_plan_sha256"),
         }
         # No outputs, reference answers, usage, cost, or outcome metrics enter query_features.
         files[target if correct is not None else "unknown"].append(row)
@@ -135,6 +163,11 @@ def export_training_data(records, dataset_records, dataset_manifest, output_dir:
         "dataset": dataset_manifest.dataset,
         "dataset_revision": dataset_manifest.revision,
         "dataset_content_sha256": dataset_manifest.dataset_content_sha256,
+        "collection_plan_schema_version": plan_data.get("schema_version") if plan_data else None,
+        "collection_plan_sha256": plan_data.get("plan_sha256") if plan_data else None,
+        "collection_plan_sample_ids_sha256": (
+            plan_data.get("sample_ids_sha256") if plan_data else None
+        ),
         "source_run_ids": sorted({record.run_id for record in records}),
         "evaluator_version": EVALUATOR_VERSION,
         "excluded_official_test_records": excluded_test,
@@ -158,10 +191,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dataset-dir", type=Path, default=Path("data/processed/gsm8k"))
     parser.add_argument("--manifest", type=Path, default=Path("data/manifests/gsm8k.json"))
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/training_data"))
+    parser.add_argument("--collection-plan", type=Path)
     args = parser.parse_args(argv)
     manifest = DatasetManifest.model_validate_json(args.manifest.read_text("utf-8"))
     dataset = load_processed_dataset(args.dataset_dir, manifest)
-    result = export_training_data(load_records(args.records), dataset, manifest, args.output_dir)
+    result = export_training_data(
+        load_records(args.records), dataset, manifest, args.output_dir, args.collection_plan
+    )
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

@@ -6,6 +6,8 @@ Run offline preflight with:
 python -m experiments.preflight --config configs/phase3a_pilot.example.yaml --dry-run
 ```
 
+To preflight the exact stratified pilot, add `--collection-plan collection_plan.json`. The report includes the selected sample IDs, their SHA-256, and the plan hash. Without this option, the report explicitly identifies the backward-compatible `legacy_sorted_prefix_v1` selection.
+
 It validates processed data checksums and pinned source provenance, configured model IDs against the dated price catalog, prompt/evaluator references, approval flags, request/attempt caps, presence of `TUTOR_LITELLM_API_KEY` by variable name, and optional checkpoint existence. It writes `preflight_report.json`; it never contacts a provider. Secret values are not included. `PASS` means validation passed, not that provider access is verified; `BLOCKED` means the configuration must not be invoked.
 
 ## Current hard blocker

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from decimal import Decimal
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from datasets.schemas import DatasetManifest
 from datasets.validation import load_processed_dataset
+from experiments.collection_plan import validate_collection_plan
 from experiments.config import BenchmarkConfig, load_config
 from experiments.model_catalog import resolve_model
 from experiments.pricing import estimate_usd
@@ -28,15 +30,43 @@ def make_report(
     manifest_path: Path,
     run_dir: Path | None = None,
     environment: dict[str, str] | None = None,
+    collection_plan: dict | Path | None = None,
 ) -> dict:
     env = os.environ if environment is None else environment
     checks: list[dict] = []
     try:
         manifest = DatasetManifest.model_validate_json(manifest_path.read_text("utf-8"))
         rows = load_processed_dataset(dataset_dir, manifest)
-        selected = [row for row in rows if row.assigned_split == "validation"][: config.max_samples]
+        if isinstance(collection_plan, Path):
+            plan_data = json.loads(collection_plan.read_text("utf-8"))
+        else:
+            plan_data = collection_plan
+        if plan_data is None:
+            selected = sorted(
+                (row for row in rows if row.assigned_split == "validation"),
+                key=lambda row: row.sample_id,
+            )[: config.max_samples]
+            selection_policy = "legacy_sorted_prefix_v1"
+        else:
+            selected = validate_collection_plan(
+                plan_data,
+                rows,
+                manifest,
+                expected_count=config.max_samples,
+            )
+            selection_policy = "versioned_collection_plan_v1"
         _check(
             checks, "PASS", "dataset_integrity", f"verified {len(rows)} rows and manifest hashes"
+        )
+        _check(
+            checks,
+            "PASS",
+            "collection_plan" if plan_data is not None else "legacy_selection",
+            (
+                f"validated plan {plan_data['plan_sha256']} for {len(selected)} exact sample IDs"
+                if plan_data is not None
+                else "no plan supplied; legacy sorted-prefix selection is explicit"
+            ),
         )
         provenance_reasons = scientific_eligibility_reasons(config, rows, manifest)
         if provenance_reasons:
@@ -56,8 +86,9 @@ def make_report(
         )
         if not selected:
             _check(checks, "FAIL", "dataset_sample", "validation split has no selected rows")
-    except (OSError, ValueError, TypeError) as exc:
+    except (OSError, ValueError, TypeError, KeyError) as exc:
         manifest, selected = None, []
+        selection_policy, plan_data = "invalid", None
         _check(checks, "FAIL", "dataset_integrity", str(exc))
 
     if config.mode != "real":
@@ -109,7 +140,7 @@ def make_report(
         )
 
     retries = config.max_retries + (1 if config.fallback_policy == "operational" else 0)
-    request_attempts = config.max_samples * 2 * (1 + retries)
+    request_attempts = len(selected) * 2 * (1 + retries)
     _check(
         checks,
         "PASS",
@@ -196,6 +227,12 @@ def make_report(
         "provider_calls_made": 0,
         "dataset": manifest.model_dump(mode="json") if manifest else None,
         "selected_sample_count": len(selected),
+        "selection_policy": selection_policy,
+        "selected_sample_ids": [row.sample_id for row in selected],
+        "selected_sample_ids_sha256": hashlib.sha256(
+            "\n".join(row.sample_id for row in selected).encode()
+        ).hexdigest(),
+        "collection_plan_sha256": plan_data.get("plan_sha256") if plan_data else None,
         "max_requests": config.max_requests,
         "maximum_attempt_envelope": request_attempts,
         "budget_usd": str(Decimal(str(config.max_run_budget_usd)))
@@ -267,6 +304,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--dataset-dir", type=Path, default=Path("data/processed/gsm8k"))
     parser.add_argument("--manifest", type=Path, default=Path("data/manifests/gsm8k.json"))
+    parser.add_argument("--collection-plan", type=Path)
     parser.add_argument("--run-dir", type=Path)
     parser.add_argument("--output", type=Path, default=Path("preflight_report.json"))
     parser.add_argument(
@@ -278,6 +316,7 @@ def main(argv: list[str] | None = None) -> int:
         dataset_dir=args.dataset_dir,
         manifest_path=args.manifest,
         run_dir=args.run_dir,
+        collection_plan=args.collection_plan,
     )
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(

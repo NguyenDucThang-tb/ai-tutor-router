@@ -61,8 +61,10 @@ See [candidate model/pricing research](docs/experiments/model_selection.md), [co
 ```bash
 uv run python -m experiments.preflight --config configs/phase3a_pilot.example.yaml --dry-run
 uv run python -m experiments.collection_plan --split validation --samples 10 --seed 42
+uv run python -m experiments.preflight --config configs/phase3a_pilot.example.yaml --collection-plan collection_plan.json
+uv run python -m experiments.benchmark run --config configs/benchmark_mock.yaml --collection-plan collection_plan.json
 uv run python -m experiments.analysis review-sample --records artifacts/runs/<run-id>/records.jsonl
-uv run python -m experiments.training_data --records artifacts/runs/<run-id>/records.jsonl
+uv run python -m experiments.training_data --records artifacts/runs/<run-id>/records.jsonl --collection-plan collection_plan.json
 ```
 
 Preflight and all tests are offline. The example pilot config does not authorize a real run. The benchmark runner refuses the normal LiteLLM path until a provider-specific hard spending bound is verified and implemented. Real pilot and collection status remain `NOT_RUN`.

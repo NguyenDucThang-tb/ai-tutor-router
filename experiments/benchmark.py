@@ -12,6 +12,7 @@ from datasets.validation import load_processed_dataset
 from evaluation.metrics import summarize_records
 from evaluation.rubrics import review_queue
 from experiments.analysis import load_records
+from experiments.collection_plan import validate_collection_plan
 from experiments.config import load_config
 from experiments.replay import replay_records, write_replay
 from experiments.runner import run_benchmark, run_id_for
@@ -25,6 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--dataset-dir", type=Path, default=Path("data/processed/gsm8k"))
     run.add_argument("--manifest", type=Path, default=Path("data/manifests/gsm8k.json"))
     run.add_argument("--split", choices=("train", "validation", "test"), default="validation")
+    run.add_argument("--collection-plan", type=Path)
     run.add_argument("--output-dir", type=Path, default=Path("artifacts/runs"))
     for command in ("evaluate", "report", "review-queue"):
         item = sub.add_parser(command)
@@ -41,19 +43,39 @@ def main(argv: list[str] | None = None) -> int:
         config = load_config(args.config)
         source_manifest = DatasetManifest.model_validate_json(args.manifest.read_text("utf-8"))
         records = load_processed_dataset(args.dataset_dir, source_manifest)
-        selected = sorted(
-            (row for row in records if row.assigned_split == args.split),
-            key=lambda row: row.sample_id,
-        )
-        attempts = config.max_retries + 1 if config.mode == "real" else 1
-        if config.mode == "real" and config.fallback_policy == "operational":
-            attempts += 1
-        selected = selected[: min(config.max_samples, config.max_requests // (2 * attempts))]
+        plan = None
+        if args.collection_plan:
+            plan = json.loads(args.collection_plan.read_text("utf-8"))
+            selected = validate_collection_plan(
+                plan,
+                records,
+                source_manifest,
+                expected_split=args.split,
+                expected_count=config.max_samples,
+            )
+        else:
+            selected = sorted(
+                (row for row in records if row.assigned_split == args.split),
+                key=lambda row: row.sample_id,
+            )
+            attempts = config.max_retries + 1 if config.mode == "real" else 1
+            if config.mode == "real" and config.fallback_policy == "operational":
+                attempts += 1
+            selected = selected[: min(config.max_samples, config.max_requests // (2 * attempts))]
         if not selected:
             raise ValueError("request cap leaves no paired benchmark samples")
-        target = args.output_dir / run_id_for(config, selected)
+        target = args.output_dir / run_id_for(
+            config, selected, plan.get("plan_sha256") if plan is not None else None
+        )
         manifest, executions = asyncio.run(
-            run_benchmark(config, records, source_manifest, target, args.split)
+            run_benchmark(
+                config,
+                records,
+                source_manifest,
+                target,
+                args.split,
+                collection_plan=plan,
+            )
         )
         print(
             json.dumps(
@@ -63,6 +85,12 @@ def main(argv: list[str] | None = None) -> int:
                     "records": len(executions),
                     "mode": config.mode,
                     "scientific_protocol_eligible": manifest.scientific_protocol_eligible,
+                    "selection_policy": manifest.selection_policy,
+                    "sample_ids": manifest.collection_plan_sample_ids
+                    if plan is not None
+                    else [row.sample_id for row in selected],
+                    "sample_ids_sha256": manifest.sample_ids_sha256,
+                    "collection_plan_sha256": manifest.collection_plan_sha256,
                 },
                 indent=2,
             )
