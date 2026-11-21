@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
                     "run_dir": str(target),
                     "records": len(executions),
                     "mode": config.mode,
-                    "scientific_eligible": manifest.scientific_eligible,
+                    "scientific_protocol_eligible": manifest.scientific_protocol_eligible,
                 },
                 indent=2,
             )

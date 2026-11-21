@@ -16,6 +16,15 @@ SOURCE_ORGANIZATION = "OpenAI"
 SOURCE_REPOSITORY = "https://github.com/openai/grade-school-math"
 SOURCE_REVISION = "3101c7d5072418e28b9008a6636bde82a006892c"
 LICENSE = "MIT (upstream repository license; copyright OpenAI 2021)"
+VERIFIED_RAW_FILE_SHA256 = {
+    "train": "17f347dc51477c50d4efb83959dbb7c56297aba886e5544ee2aaed3024813465",
+    "test": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14",
+}
+VERIFIED_RAW_FILE_SIZES = {"train": 4166206, "test": 749738}
+VERIFIED_PREPARED_CONTENT_SHA256 = (
+    "aa75c686332c09e12ce6412571b32b7efae779dfc8696d3448b29a45e5542e4b"
+)
+VERIFIED_SPLIT_COUNTS = {"train": 6726, "validation": 747, "test": 1319}
 SPLITS = ("train", "test")
 
 

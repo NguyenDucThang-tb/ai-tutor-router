@@ -18,10 +18,11 @@ class BenchmarkConfig(BaseModel):
     max_requests: int = Field(default=4, ge=2)
     concurrency: int = Field(default=2, ge=1, le=128)
     timeout_seconds: float = Field(default=30, gt=0, le=300)
+    execution_lease_seconds: float = Field(default=900, gt=0, le=7200)
     temperature: float = Field(default=0, ge=0, le=2)
     max_tokens: int = Field(default=512, ge=1, le=32768)
     seed: int = 42
-    max_retries: int = Field(default=1, ge=0, le=3)
+    max_retries: int = Field(default=0, ge=0, le=3)
     retry_delay_seconds: float = Field(default=0.1, ge=0, le=5)
     fallback_policy: Literal["disabled", "operational"] = "disabled"
     small_fallback_identifier: str | None = None
@@ -32,7 +33,11 @@ class BenchmarkConfig(BaseModel):
     pricing_effective_date: str | None = None
     allow_real_provider: bool = False
     experiment_approval_id: str | None = None
+    allow_paid_retries: bool = False
+    paid_retry_approval_id: str | None = None
     retry_interrupted: bool = False
+    allow_uncertain_reissue: bool = False
+    uncertain_reissue_approval_id: str | None = None
     retry_failed: bool = False
     rerun_completed: bool = False
     router_strategy: Literal["always_small", "always_strong", "random", "rule"] = "rule"
@@ -50,6 +55,18 @@ class BenchmarkConfig(BaseModel):
                 raise ValueError(
                     "real mode requires allow_real_provider and experiment_approval_id"
                 )
+            if self.allow_uncertain_reissue and not self.uncertain_reissue_approval_id:
+                raise ValueError("uncertain paid reissue requires uncertain_reissue_approval_id")
+            if (self.max_retries > 0 or self.retry_failed or self.rerun_completed) and (
+                not self.allow_paid_retries or not self.paid_retry_approval_id
+            ):
+                raise ValueError(
+                    "real paid retries/reruns require allow_paid_retries and paid_retry_approval_id"
+                )
+        elif self.uncertain_reissue_approval_id is not None:
+            raise ValueError("uncertain reissue approval is only valid in real mode")
+        if self.mode != "real" and self.paid_retry_approval_id is not None:
+            raise ValueError("paid retry approval is only valid in real mode")
         if self.fallback_policy == "disabled" and (
             self.small_fallback_identifier or self.strong_fallback_identifier
         ):

@@ -11,6 +11,13 @@ temperature: 0
 max_tokens: 256
 seed: 42
 max_retries: 0
+execution_lease_seconds: 900
 fallback_policy: disabled
 allow_real_provider: false
 experiment_approval_id: REVIEWED_APPROVAL_REFERENCE
+allow_paid_retries: false
+# Required with allow_paid_retries=true or max_retries>0.
+# paid_retry_approval_id: REVIEWED_RETRY_APPROVAL_REFERENCE
+allow_uncertain_reissue: false
+# Required only after explicit approval to reissue an uncertain provider outcome.
+# uncertain_reissue_approval_id: REVIEWED_UNCERTAIN_REISSUE_APPROVAL

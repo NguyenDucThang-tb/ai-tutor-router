@@ -7,6 +7,8 @@
 - Deduplication found one near-duplicate pair (similarity 0.933333) grouped within train; validation reported zero cross-split overlaps.
 - MATH is deferred because official source data was not available in the inspected upstream repository. No derivative mirror was substituted.
 - Evaluator, dataset, replay, label guard, paired mock runner, persistence, and metrics are covered by automated tests. Mock runs are plumbing checks only.
+- Checkpoint recovery distinguishes pending, claimed, in-flight, uncertain, and terminal states; leases and fencing prevent concurrent and stale writes. Uncertain real reissue is disabled by default and requires an explicit approval reference.
+- Replay retains failed, interrupted, uncertain, and not-started rows; pipeline and model-only latency definitions are separated. Scientific protocol and per-record eligibility require provenance checks and remain distinct from evaluator coverage and correctness.
 
 ## Not measured
 
