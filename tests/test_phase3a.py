@@ -336,6 +336,9 @@ def test_changed_plan_gets_distinct_checkpoint_identity_and_request_cap_fails(tm
     "mutation,match",
     [
         ("checksum", "dataset checksum"),
+        ("revision", "dataset revision"),
+        ("sample_count", "sample count"),
+        ("plan_hash", "plan hash mismatch"),
         ("missing", "missing"),
         ("duplicate", "duplicate"),
         ("cross_split", "outside planned split"),
@@ -348,6 +351,12 @@ def test_collection_plan_rejects_invalid_dataset_binding(tmp_path, mutation, mat
     plan = dict(plan)
     if mutation == "checksum":
         plan["dataset_content_sha256"] = "0" * 64
+    elif mutation == "revision":
+        plan["dataset_revision"] = "other-revision"
+    elif mutation == "sample_count":
+        plan["selected_count"] -= 1
+    elif mutation == "plan_hash":
+        pass
     elif mutation == "missing":
         plan["sample_ids"][0] = "not-in-dataset"
         plan["sample_ids_sha256"] = hashlib.sha256(
@@ -367,6 +376,8 @@ def test_collection_plan_rejects_invalid_dataset_binding(tmp_path, mutation, mat
             "\n".join(plan["sample_ids"]).encode()
         ).hexdigest()
     plan = seal_plan(plan)
+    if mutation == "plan_hash":
+        plan["plan_sha256"] = "0" * 64
     config = BenchmarkConfig(
         mode="real",
         provider="litellm",
