@@ -28,6 +28,7 @@ class BenchmarkConfig(BaseModel):
     small_fallback_identifier: str | None = None
     strong_fallback_identifier: str | None = None
     per_request_budget_usd: float | None = Field(default=None, ge=0)
+    max_run_budget_usd: float | None = Field(default=None, gt=0)
     provider_region: str | None = None
     pricing_source: str | None = None
     pricing_effective_date: str | None = None
@@ -51,7 +52,7 @@ class BenchmarkConfig(BaseModel):
         if self.mode == "real":
             if self.provider != "litellm":
                 raise ValueError("real execution mode requires provider=litellm")
-            if not self.allow_real_provider or not self.experiment_approval_id:
+            if self.allow_real_provider and not self.experiment_approval_id:
                 raise ValueError(
                     "real mode requires allow_real_provider and experiment_approval_id"
                 )
@@ -80,6 +81,8 @@ class BenchmarkConfig(BaseModel):
                     raise ValueError("fallback model must differ from its primary model")
         if self.per_request_budget_usd is not None and self.mode != "real":
             raise ValueError("per-request provider budget is only valid in real mode")
+        if self.max_run_budget_usd is not None and self.mode != "real":
+            raise ValueError("run budget is only valid in real mode")
         return self
 
 

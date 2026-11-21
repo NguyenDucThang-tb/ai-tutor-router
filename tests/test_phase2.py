@@ -126,8 +126,11 @@ def test_real_provider_requires_explicit_gate_and_approval():
         "small_model_identifier": "a",
         "strong_model_identifier": "b",
     }
-    with pytest.raises(ValueError):
-        BenchmarkConfig.model_validate(data)
+    # A real config can be loaded for offline preflight without granting execution.
+    dry_run_config = BenchmarkConfig.model_validate(data)
+    assert dry_run_config.mode == "real" and not dry_run_config.allow_real_provider
+    with pytest.raises(ValueError, match="allow_real_provider"):
+        BenchmarkConfig.model_validate({**data, "allow_real_provider": True})
     config = BenchmarkConfig.model_validate(
         {**data, "allow_real_provider": True, "experiment_approval_id": "approved-1"}
     )
@@ -308,6 +311,9 @@ def _record() -> ExperimentRecord:
         provenance={
             "source_hash": hashlib.sha256(b"line-1").hexdigest(),
             "dataset_revision": "a" * 40,
+            "collection_plan_sha256": "d" * 64,
+            "collection_plan_sample_ids_sha256": "e" * 64,
+            "selection_policy": "versioned_collection_plan_v1",
             "commit_sha": "c" * 40,
             "request_id": "req-1",
             "output_sha256": hashlib.sha256(b"FINAL ANSWER: 2").hexdigest(),
@@ -326,6 +332,8 @@ def test_replay_matches_source_hash_and_re_evaluates(tmp_path):
     assert replay[0].evaluation.is_correct is True
     assert replay[0].scientific_eligible is False
     assert replay[0].provenance["replay_provenance_status"] == "verified"
+    assert replay[0].provenance["collection_plan_sha256"] == "d" * 64
+    assert replay[0].provenance["collection_plan_sample_ids_sha256"] == "e" * 64
 
 
 def test_replay_rejects_mismatched_source_or_output_provenance(tmp_path):

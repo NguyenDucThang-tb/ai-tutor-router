@@ -63,6 +63,42 @@ def review_queue(records) -> list[dict]:
     return rows
 
 
+def phase3a_review_sample(records, *, per_status: int = 5, seed: int = 42) -> list[dict]:
+    """Deterministically sample correct, incorrect, and uncertain successful evaluations."""
+    import hashlib
+
+    eligible = []
+    for record in records:
+        if record.execution_status != "success" or record.evaluation is None:
+            continue
+        status = record.evaluation.status
+        if status not in {"correct", "incorrect", "unparseable", "unsupported", "ambiguous"}:
+            continue
+        eligible.append((status, record))
+    result = []
+    for status in sorted({status for status, _ in eligible}):
+        bucket = [record for item_status, record in eligible if item_status == status]
+        bucket.sort(
+            key=lambda record: hashlib.sha256(
+                f"{seed}:{record.run_id}:{record.sample_id}:{record.model_tier}".encode()
+            ).hexdigest()
+        )
+        result.extend(
+            {
+                "run_id": record.run_id,
+                "sample_id": record.sample_id,
+                "model_tier": record.model_tier,
+                "model_output": record.model_output,
+                "reference_answer": record.evaluation.reference_answer,
+                "automatic_status": status,
+                "reviewed": False,
+                "reviewer_id": None,
+            }
+            for record in bucket[:per_status]
+        )
+    return result
+
+
 def correctness_sufficiency_label(record, *, frozen_criterion: str) -> int | None:
     """Produce a train/validation-only correctness label; mock/replay are ineligible."""
     if record.split == "test":

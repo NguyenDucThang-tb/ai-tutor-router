@@ -40,6 +40,7 @@ from datasets.gsm8k import raw_file_url as gsm8k_raw_file_url
 from datasets.provenance import sha256_records
 from datasets.schemas import DatasetManifest, DatasetRecord
 from evaluation.evaluator import EVALUATOR_VERSION, evaluate_answer
+from experiments.collection_plan import validate_collection_plan
 from experiments.config import BenchmarkConfig
 from experiments.prompts import PROMPT_SHA256, PROMPT_TEMPLATE, PROMPT_VERSION
 from experiments.records import ExecutionMetrics, ExperimentRecord, RunManifest
@@ -50,7 +51,11 @@ class LeaseLostError(RuntimeError):
     pass
 
 
-def run_id_for(config: BenchmarkConfig, records: Sequence[DatasetRecord]) -> str:
+def run_id_for(
+    config: BenchmarkConfig,
+    records: Sequence[DatasetRecord],
+    collection_plan_sha256: str | None = None,
+) -> str:
     identity_config = config.model_dump(mode="json")
     for control in (
         "retry_interrupted",
@@ -67,6 +72,8 @@ def run_id_for(config: BenchmarkConfig, records: Sequence[DatasetRecord]) -> str
         "dataset_content_sha256": sha256_records(records),
         "sample_ids": [record.sample_id for record in records],
     }
+    if collection_plan_sha256 is not None:
+        material["collection_plan_sha256"] = collection_plan_sha256
     encoded = json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
     return f"run-{hashlib.sha256(encoded).hexdigest()[:20]}"
 
@@ -132,6 +139,7 @@ def create_run_manifest(
     records: Sequence[DatasetRecord],
     source_manifest: DatasetManifest,
     assigned_split: str,
+    collection_plan: dict | None = None,
 ) -> RunManifest:
     selected_hash = sha256_records(records)
     ids_hash = hashlib.sha256(
@@ -145,7 +153,11 @@ def create_run_manifest(
             packages[package] = "not-installed"
     eligibility_reasons = scientific_eligibility_reasons(config, records, source_manifest)
     return RunManifest(
-        run_id=run_id_for(config, records),
+        run_id=run_id_for(
+            config,
+            records,
+            collection_plan.get("plan_sha256") if collection_plan is not None else None,
+        ),
         created_at_utc=datetime.now(UTC).isoformat(),
         git_commit_sha=_git_commit_sha(),
         execution_mode=config.mode,
@@ -158,10 +170,31 @@ def create_run_manifest(
             name: item.sha256 for name, item in source_manifest.raw_files.items()
         },
         dataset_content_sha256=selected_hash,
+        source_dataset_content_sha256=(
+            source_manifest.dataset_content_sha256 if collection_plan is not None else None
+        ),
         sample_source_hashes={record.sample_id: record.source_hash for record in records},
         assigned_split=assigned_split,
         sample_count=len(records),
         sample_ids_sha256=ids_hash,
+        collection_plan_schema_version=(
+            collection_plan.get("schema_version") if collection_plan is not None else None
+        ),
+        collection_plan_sha256=(
+            collection_plan.get("plan_sha256") if collection_plan is not None else None
+        ),
+        collection_plan_sample_ids=(
+            list(collection_plan["sample_ids"]) if collection_plan is not None else []
+        ),
+        collection_plan_sample_ids_sha256=(
+            collection_plan.get("sample_ids_sha256") if collection_plan is not None else None
+        ),
+        collection_plan_split=(collection_plan.get("split") if collection_plan else None),
+        selection_policy=(
+            "versioned_collection_plan_v1"
+            if collection_plan is not None
+            else "legacy_sorted_prefix_v1"
+        ),
         small_model_identifier=config.small_model_identifier,
         strong_model_identifier=config.strong_model_identifier,
         provider=config.provider,
@@ -197,9 +230,21 @@ async def run_benchmark(
     run_directory: Path,
     assigned_split: str,
     gateway: Gateway | None = None,
+    collection_plan: dict | None = None,
 ) -> tuple[RunManifest, list[ExperimentRecord]]:
     if config.mode == "replay":
         raise ValueError("replay mode uses replay_run(), not run_benchmark()")
+    if config.mode == "real" and (
+        not config.allow_real_provider or not config.experiment_approval_id
+    ):
+        raise ValueError(
+            "real provider execution requires allow_real_provider and an approval reference"
+        )
+    if config.mode == "real" and (gateway is None or isinstance(gateway, LiteLLMGateway)):
+        raise ValueError(
+            "paid invocation blocked: run experiments.preflight and provide a verified hard "
+            "spend-bound implementation; current providers have no certified bound"
+        )
     if sha256_records(records) != source_manifest.dataset_content_sha256:
         raise ValueError("benchmark records do not match the dataset manifest content hash")
     split_counts = {split: 0 for split in ("train", "validation", "test")}
@@ -207,20 +252,35 @@ async def run_benchmark(
         split_counts[record.assigned_split] += 1
     if split_counts != source_manifest.assigned_split_counts:
         raise ValueError("benchmark records do not match the dataset manifest split counts")
-    selected = sorted(
-        (record for record in records if record.assigned_split == assigned_split),
-        key=lambda record: record.sample_id,
-    )
+    if collection_plan is not None:
+        selected = validate_collection_plan(
+            collection_plan,
+            records,
+            source_manifest,
+            expected_split=assigned_split,
+            expected_count=config.max_samples,
+        )
+    else:
+        selected = sorted(
+            (record for record in records if record.assigned_split == assigned_split),
+            key=lambda record: record.sample_id,
+        )
     worst_case_attempts = config.max_retries + 1
     if config.fallback_policy == "operational":
         worst_case_attempts += 1
     if config.mode != "real":
         worst_case_attempts = 1
     request_sample_limit = config.max_requests // (2 * worst_case_attempts)
-    selected = selected[: min(config.max_samples, request_sample_limit)]
+    if collection_plan is not None:
+        if request_sample_limit < len(selected):
+            raise ValueError("request cap cannot accommodate the complete collection plan")
+    else:
+        selected = selected[: min(config.max_samples, request_sample_limit)]
     if not selected:
         raise ValueError(f"no records found in assigned split '{assigned_split}'")
-    manifest = create_run_manifest(config, selected, source_manifest, assigned_split)
+    manifest = create_run_manifest(
+        config, selected, source_manifest, assigned_split, collection_plan
+    )
     manifest_key = _manifest_key(manifest)
     run_directory.mkdir(parents=True, exist_ok=True)
     store = RunStore(run_directory / "run.sqlite3")
@@ -666,6 +726,7 @@ def _make_record(
         "source_hash": sample.source_hash,
         "commit_sha": manifest.git_commit_sha,
         "sample_is_synthetic": sample.dataset.startswith("synthetic"),
+        **_plan_record_provenance(manifest),
         **(provenance_extra or {}),
     }
     return ExperimentRecord(
@@ -719,12 +780,25 @@ def _not_started_record(manifest, sample, tier, config, gateway, feature_ms, dec
             "source_hash": sample.source_hash,
             "commit_sha": manifest.git_commit_sha,
             "checkpoint_state": "known_unstarted",
+            **_plan_record_provenance(manifest),
         },
         metrics=ExecutionMetrics(
             feature_extraction_ms=feature_ms,
             router_decision_ms=decision.router_latency_ms,
         ),
     )
+
+
+def _plan_record_provenance(manifest: RunManifest) -> dict:
+    if manifest.collection_plan_sha256 is None:
+        return {"selection_policy": manifest.selection_policy}
+    return {
+        "collection_plan_sha256": manifest.collection_plan_sha256,
+        "collection_plan_schema_version": manifest.collection_plan_schema_version,
+        "collection_plan_sample_ids_sha256": manifest.collection_plan_sample_ids_sha256,
+        "collection_plan_split": manifest.collection_plan_split,
+        "selection_policy": manifest.selection_policy,
+    }
 
 
 def _legacy_uncertain_record(manifest, sample, tier, config, gateway, feature_ms, decision):

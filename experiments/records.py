@@ -77,10 +77,17 @@ class RunManifest(BaseModel):
     dataset_revision: str
     dataset_source_file_sha256: dict[str, str]
     dataset_content_sha256: str
+    source_dataset_content_sha256: str | None = None
     sample_source_hashes: dict[str, str]
     assigned_split: str
     sample_count: int
     sample_ids_sha256: str
+    collection_plan_schema_version: str | None = None
+    collection_plan_sha256: str | None = None
+    collection_plan_sample_ids: list[str] = Field(default_factory=list)
+    collection_plan_sample_ids_sha256: str | None = None
+    collection_plan_split: str | None = None
+    selection_policy: str = "legacy_sorted_prefix_v1"
     small_model_identifier: str
     strong_model_identifier: str
     provider: str
