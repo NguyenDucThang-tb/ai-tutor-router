@@ -103,8 +103,10 @@ class RunManifest(BaseModel):
     pricing_source: str | None
     pricing_effective_date: str | None
     experiment_approval_id: str | None
-    allow_paid_retries: bool
-    paid_retry_approval_id: str | None
+    # Read-only compatibility for manifests produced before recovery controls
+    # moved into the SQLite recovery authorization audit.
+    allow_paid_retries: bool = Field(default=False, exclude=True)
+    paid_retry_approval_id: str | None = Field(default=None, exclude=True)
     software_versions: dict[str, str]
     scientific_protocol_eligible: bool
     scientific_eligibility_reasons: list[str]

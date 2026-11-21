@@ -58,6 +58,8 @@ def run_id_for(config: BenchmarkConfig, records: Sequence[DatasetRecord]) -> str
         "rerun_completed",
         "allow_uncertain_reissue",
         "uncertain_reissue_approval_id",
+        "allow_paid_retries",
+        "paid_retry_approval_id",
     ):
         identity_config.pop(control, None)
     material = {
@@ -182,8 +184,6 @@ def create_run_manifest(
         pricing_source=config.pricing_source,
         pricing_effective_date=config.pricing_effective_date,
         experiment_approval_id=config.experiment_approval_id,
-        allow_paid_retries=config.allow_paid_retries,
-        paid_retry_approval_id=config.paid_retry_approval_id,
         software_versions=packages,
         scientific_protocol_eligible=not eligibility_reasons,
         scientific_eligibility_reasons=eligibility_reasons,
@@ -227,7 +227,11 @@ async def run_benchmark(
     store.ensure_run(manifest, manifest_key)
     tasks = [(sample.sample_id, tier) for sample in selected for tier in ("small", "strong")]
     store.ensure_tasks(manifest.run_id, tasks)
-    atomic_write(run_directory / "run_manifest.json", manifest.model_dump_json(indent=2).encode())
+    stored_manifest = store.stored_manifest(manifest.run_id)
+    atomic_write(
+        run_directory / "run_manifest.json",
+        json.dumps(stored_manifest, indent=2, sort_keys=True).encode(),
+    )
 
     model_gateway = gateway or _create_gateway(config)
     router = build_router(
@@ -309,6 +313,11 @@ async def run_benchmark(
         run_directory / "records.jsonl",
         b"".join((record.model_dump_json() + "\n").encode() for record in result_records),
     )
+    recovery_audit = store.recovery_audit(manifest.run_id)
+    atomic_write(
+        run_directory / "recovery_audit.jsonl",
+        b"".join((json.dumps(item, sort_keys=True) + "\n").encode() for item in recovery_audit),
+    )
     statuses = store.statuses(manifest.run_id)
     atomic_write(
         run_directory / "run_summary.json",
@@ -341,6 +350,11 @@ async def _execute_one(
     store: RunStore,
     owner_id: str,
 ) -> None:
+    request_attempt_limit = config.max_retries + 1
+    if config.fallback_policy == "operational" and config.mode == "real":
+        request_attempt_limit += 1
+    if config.mode != "real":
+        request_attempt_limit = 1
     claim = store.claim(
         manifest.run_id,
         sample.sample_id,
@@ -353,8 +367,11 @@ async def _execute_one(
         retry_interrupted=config.retry_interrupted,
         allow_uncertain_reissue=(config.mode != "real" or config.allow_uncertain_reissue),
         uncertain_reissue_approval_id=config.uncertain_reissue_approval_id,
+        allow_paid_retries=config.allow_paid_retries,
         paid_retry_approval_id=config.paid_retry_approval_id,
         provider_is_paid=config.mode == "real",
+        request_attempt_limit=request_attempt_limit,
+        git_commit_sha=manifest.git_commit_sha,
     )
     if claim is None:
         return
@@ -430,6 +447,13 @@ async def _execute_one(
                 "prompt_version": PROMPT_VERSION,
                 "prompt_sha256": PROMPT_SHA256,
                 "user_content_sha256": hashlib.sha256(sample.question.encode()).hexdigest(),
+                "reserved_requests": request_attempt_limit,
+                "paid_retry_approval_id": config.paid_retry_approval_id
+                if claim.prior_status in {"provider_failure", "success"}
+                else None,
+                "uncertain_reissue_approval_id": config.uncertain_reissue_approval_id
+                if claim.prior_status == "uncertain"
+                else None,
             },
             now=time.time(),
         )
@@ -484,7 +508,12 @@ async def _execute_one(
                 "output_sha256": hashlib.sha256(result.text.encode()).hexdigest(),
                 "provider_outcome_unknown": False,
                 "possible_additional_cost": bool(prior_attempts),
-                "uncertain_reissue_approval_id": config.uncertain_reissue_approval_id,
+                "paid_retry_approval_id": config.paid_retry_approval_id
+                if claim.prior_status in {"provider_failure", "success"}
+                else None,
+                "uncertain_reissue_approval_id": config.uncertain_reissue_approval_id
+                if claim.prior_status == "uncertain"
+                else None,
             },
         )
         record = record.model_copy(
@@ -531,7 +560,12 @@ async def _execute_one(
                 "error_category": exc.category.value,
                 "provider_outcome_unknown": outcome_unknown,
                 "possible_additional_cost": bool(prior_attempts) or outcome_unknown,
-                "uncertain_reissue_approval_id": config.uncertain_reissue_approval_id,
+                "paid_retry_approval_id": config.paid_retry_approval_id
+                if claim.prior_status in {"provider_failure", "success"}
+                else None,
+                "uncertain_reissue_approval_id": config.uncertain_reissue_approval_id
+                if claim.prior_status == "uncertain"
+                else None,
             },
         )
         if outcome_unknown:
@@ -833,6 +867,7 @@ def _create_gateway(config: BenchmarkConfig) -> Gateway:
 def _manifest_key(manifest: RunManifest) -> str:
     material = manifest.model_dump(mode="json")
     material.pop("created_at_utc", None)
+    material.pop("git_commit_sha", None)
     return hashlib.sha256(
         json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
