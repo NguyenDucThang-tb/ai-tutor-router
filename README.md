@@ -4,7 +4,7 @@ Research prototype for choosing a processing tier for text-based mathematics tut
 
 ## Current phase
 
-**Phase 1: PARTIAL / NOT FULLY VERIFIED.** Phase 0 research and architecture documents are present. Deterministic baseline routers, mock and LiteLLM gateways, typed configuration, API reliability controls, tests, CI, and Docker configuration are implemented. The local test suite passes; remote CI and Docker image build/run still need verification. No learned router, dataset benchmark, or real-model measurements are available.
+**Phase 1: MERGED. Phase 2: IMPLEMENTED FOR REVIEW; SCIENTIFIC COMPARISON NOT RUN.** Phase 2 adds pinned GSM8K preparation, leakage checks, a deterministic numeric/restricted-symbolic evaluator, paired mock/replay/explicitly gated real benchmark tooling, SQLite checkpoints, metrics, and correctness-only label preparation. MATH is deferred because official data access was not verified. No real model calls or model-quality claims were made. See [Phase 2 results status](docs/experiments/phase2_results_status.md).
 
 ## Architecture
 
@@ -39,6 +39,18 @@ Choose `TUTOR_ROUTER_STRATEGY` from `always_small`, `always_strong`, `random`, o
 LiteLLM calls pass `num_retries=0` and `max_retries=0`; the adapter owns one retry loop, limited to rate limits, timeouts, and transient provider failures. Authentication and malformed-response errors are not retried. An optional fallback model is tried once after primary retries are exhausted. Each attempt and its cost is included in response metadata; aggregate cost and the final attempt's cost are reported separately. Aggregate totals are null when any attempt's corresponding cost is unknown, with known subtotals and missing-attempt counts retained.
 
 The rate limiter uses an in-memory sliding window keyed by client IP and is process-local; it is not shared among workers. It stores up to 4,096 client windows plus one shared overflow window for excess unique keys, preserving a limit under high cardinality. A min-heap reclaims expired windows on incoming requests without scanning every client. Logs omit question text, bearer credentials, and provider exception bodies. Latency separates router processing, gateway, individual attempts, and total request time.
+
+## Phase 2 research tooling
+
+Prepare and validate the official GSM8K source (download is explicit and not part of normal tests or CI):
+
+```bash
+uv run python -m experiments.dataset prepare --dataset gsm8k --seed 42
+uv run python -m experiments.dataset validate --dataset gsm8k
+uv run python -m experiments.benchmark run --config configs/benchmark_mock.yaml --split validation
+```
+
+Mock mode only validates the pipeline and is never research accuracy evidence. Real calls require an explicit YAML opt-in, approval reference, environment credentials, and remain subject to Phase 1 fail-closed cost guards. See `docs/experiments/` for dataset, evaluator, benchmark, metrics, and reproducibility protocols.
 
 If `TUTOR_PER_REQUEST_BUDGET_USD` is configured, real provider requests fail closed because Phase 1 has no verified token/pricing estimator. This prevents an unknown estimate from being treated as zero; it is not dynamic budget optimization. LiteLLM-calculated cost is labeled separately from provider-reported usage and actual billed cost. Actual billing remains unknown unless supplied by a provider.
 

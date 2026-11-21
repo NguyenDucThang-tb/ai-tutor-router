@@ -12,6 +12,8 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "sympy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -25,7 +27,6 @@ research = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "scikit-learn" },
-    { name = "sympy" },
 ]
 
 [package.metadata]
@@ -39,9 +40,10 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.5,<3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3,<9" },
     { name = "python-dotenv", specifier = ">=1,<2" },
+    { name = "pyyaml", specifier = ">=6,<7" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6,<1" },
     { name = "scikit-learn", marker = "extra == 'research'", specifier = ">=1.5,<2" },
-    { name = "sympy", marker = "extra == 'research'", specifier = ">=1.13,<2" },
+    { name = "sympy", specifier = ">=1.13,<2" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1" },
 ]
 provides-extras = ["dev", "research"]

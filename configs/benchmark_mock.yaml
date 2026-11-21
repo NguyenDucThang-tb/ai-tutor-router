@@ -1,0 +1,14 @@
+mode: mock
+provider: mock
+small_model_identifier: mock-small
+strong_model_identifier: mock-strong
+max_samples: 2
+max_requests: 4
+concurrency: 2
+timeout_seconds: 5
+temperature: 0
+max_tokens: 128
+seed: 42
+max_retries: 0
+fallback_policy: disabled
+router_strategy: rule

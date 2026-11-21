@@ -17,8 +17,12 @@ logs/
 .vscode/
 data/raw/
 data/processed/
+data/manifests/
 artifacts/
 checkpoints/
 *.pt
 *.pth
 *.safetensors
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
