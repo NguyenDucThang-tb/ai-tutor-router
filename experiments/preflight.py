@@ -31,19 +31,22 @@ def make_report(
     run_dir: Path | None = None,
     environment: dict[str, str] | None = None,
     collection_plan: dict | Path | None = None,
+    split: str = "validation",
 ) -> dict:
     env = os.environ if environment is None else environment
     checks: list[dict] = []
     try:
         manifest = DatasetManifest.model_validate_json(manifest_path.read_text("utf-8"))
         rows = load_processed_dataset(dataset_dir, manifest)
+        if split not in {"train", "validation"}:
+            raise ValueError("preflight only permits train or validation splits")
         if isinstance(collection_plan, Path):
             plan_data = json.loads(collection_plan.read_text("utf-8"))
         else:
             plan_data = collection_plan
         if plan_data is None:
             selected = sorted(
-                (row for row in rows if row.assigned_split == "validation"),
+                (row for row in rows if row.assigned_split == split),
                 key=lambda row: row.sample_id,
             )[: config.max_samples]
             selection_policy = "legacy_sorted_prefix_v1"
@@ -52,6 +55,7 @@ def make_report(
                 plan_data,
                 rows,
                 manifest,
+                expected_split=split,
                 expected_count=config.max_samples,
             )
             selection_policy = "versioned_collection_plan_v1"
@@ -82,13 +86,15 @@ def make_report(
             checks,
             "PASS",
             "split_policy",
-            "sample selection is validation-only; official test is not selected",
+            f"sample selection is {split}-only; official test is not selected",
         )
         if not selected:
-            _check(checks, "FAIL", "dataset_sample", "validation split has no selected rows")
+            _check(checks, "FAIL", "dataset_sample", f"{split} split has no selected rows")
+        selected_split = split
     except (OSError, ValueError, TypeError, KeyError) as exc:
         manifest, selected = None, []
         selection_policy, plan_data = "invalid", None
+        selected_split = None
         _check(checks, "FAIL", "dataset_integrity", str(exc))
 
     if config.mode != "real":
@@ -216,16 +222,27 @@ def make_report(
             "checkpoint",
             f"{checkpoint}; manifest compatibility must be checked by the runner",
         )
+    selection_failed = any(
+        row["status"] == "FAIL"
+        and row["check"] in {"dataset_integrity", "collection_plan", "split_policy"}
+        for row in checks
+    )
     state = (
-        "BLOCKED"
-        if any(row["status"] == "BLOCKED" for row in checks)
-        else ("FAIL" if any(row["status"] == "FAIL" for row in checks) else "PASS")
+        "FAIL"
+        if selection_failed
+        else (
+            "BLOCKED"
+            if any(row["status"] == "BLOCKED" for row in checks)
+            else ("FAIL" if any(row["status"] == "FAIL" for row in checks) else "PASS")
+        )
     )
     return {
         "schema_version": "phase3a-preflight-v1",
         "status": state,
         "provider_calls_made": 0,
         "dataset": manifest.model_dump(mode="json") if manifest else None,
+        "split": selected_split,
+        "requested_split": split,
         "selected_sample_count": len(selected),
         "selection_policy": selection_policy,
         "selected_sample_ids": [row.sample_id for row in selected],
@@ -304,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--dataset-dir", type=Path, default=Path("data/processed/gsm8k"))
     parser.add_argument("--manifest", type=Path, default=Path("data/manifests/gsm8k.json"))
+    parser.add_argument("--split", choices=("train", "validation"), default="validation")
     parser.add_argument("--collection-plan", type=Path)
     parser.add_argument("--run-dir", type=Path)
     parser.add_argument("--output", type=Path, default=Path("preflight_report.json"))
@@ -317,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest_path=args.manifest,
         run_dir=args.run_dir,
         collection_plan=args.collection_plan,
+        split=args.split,
     )
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(

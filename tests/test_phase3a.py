@@ -28,14 +28,14 @@ from experiments.runner import run_benchmark, run_id_for
 from experiments.training_data import export_training_data
 
 
-def _dataset(tmp_path: Path, count: int = 12):
+def _dataset(tmp_path: Path, count: int = 12, selected_split: str = "validation"):
     rows = [
         DatasetRecord(
             sample_id=f"row-{index}",
             dataset="gsm8k",
             dataset_revision="rev1",
             original_split="train",
-            assigned_split="validation" if index < count else "test",
+            assigned_split=selected_split if index < count else "test",
             question=("How many items? " + "number " * (index % 4 + 1)),
             reference_answer="1",
             source_id=str(index),
@@ -176,6 +176,87 @@ def test_preflight_uses_exact_collection_plan_samples_and_hash(tmp_path):
     assert report["selected_sample_ids"] == plan["sample_ids"]
     assert report["selected_sample_ids_sha256"] == plan["sample_ids_sha256"]
     assert report["collection_plan_sha256"] == plan["plan_sha256"]
+    assert report["split"] == "validation"
+
+
+def test_preflight_train_split_is_explicit_and_must_match_plan(tmp_path, capsys):
+    rows, _, dataset_dir, manifest_path = _dataset(tmp_path, count=12, selected_split="train")
+    plan = create_plan(rows, "train", 5, seed=31)
+    config = BenchmarkConfig(
+        mode="real",
+        provider="litellm",
+        small_model_identifier="openai/gpt-4.1-mini-2025-04-14",
+        strong_model_identifier="openai/gpt-4.1-2025-04-14",
+        max_samples=5,
+        max_requests=10,
+        max_run_budget_usd=1,
+        per_request_budget_usd=0.5,
+    )
+    report = make_report(
+        config,
+        dataset_dir=dataset_dir,
+        manifest_path=manifest_path,
+        environment={},
+        collection_plan=plan,
+        split="train",
+    )
+    split_check = next(check for check in report["checks"] if check["check"] == "split_policy")
+    assert report["split"] == "train"
+    assert report["selected_sample_ids"] == plan["sample_ids"]
+    assert report["selected_sample_ids_sha256"] == plan["sample_ids_sha256"]
+    assert report["collection_plan_sha256"] == plan["plan_sha256"]
+    assert "train-only" in split_check["detail"]
+
+    config_path = tmp_path / "real.yaml"
+    config_path.write_text(
+        "mode: real\nprovider: litellm\nsmall_model_identifier: "
+        "openai/gpt-4.1-mini-2025-04-14\nstrong_model_identifier: "
+        "openai/gpt-4.1-2025-04-14\nmax_samples: 5\nmax_requests: 10\n"
+        "max_run_budget_usd: 1\nper_request_budget_usd: 0.5\n",
+        encoding="utf-8",
+    )
+    plan_path = tmp_path / "train-plan.json"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    cli_report_path = tmp_path / "train-preflight.json"
+    assert (
+        preflight_main(
+            [
+                "--config",
+                str(config_path),
+                "--dataset-dir",
+                str(dataset_dir),
+                "--manifest",
+                str(manifest_path),
+                "--collection-plan",
+                str(plan_path),
+                "--split",
+                "train",
+                "--output",
+                str(cli_report_path),
+            ]
+        )
+        == 2
+    )
+    capsys.readouterr()
+    cli_report = json.loads(cli_report_path.read_text())
+    assert cli_report["split"] == "train"
+    assert cli_report["selected_sample_ids"] == plan["sample_ids"]
+
+    mismatched = make_report(
+        config,
+        dataset_dir=dataset_dir,
+        manifest_path=manifest_path,
+        environment={},
+        collection_plan=plan,
+        split="validation",
+    )
+    assert mismatched["status"] == "FAIL"
+    assert mismatched["split"] is None
+    assert mismatched["selected_sample_ids"] == []
+    assert any(
+        check["status"] == "FAIL" and "does not match requested split" in check["detail"]
+        for check in mismatched["checks"]
+    )
 
 
 def test_runner_executes_exact_planned_ids_as_paired_small_and_strong(tmp_path):
@@ -341,7 +422,7 @@ def test_changed_plan_gets_distinct_checkpoint_identity_and_request_cap_fails(tm
         ("plan_hash", "plan hash mismatch"),
         ("missing", "missing"),
         ("duplicate", "duplicate"),
-        ("cross_split", "outside planned split"),
+        ("cross_split", "does not match requested split"),
         ("official_test", "official test"),
     ],
 )
