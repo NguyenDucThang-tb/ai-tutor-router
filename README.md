@@ -4,7 +4,7 @@ Research prototype for choosing a processing tier for text-based mathematics tut
 
 ## Current phase
 
-**Phase 1: MERGED. Phase 2: IMPLEMENTED FOR REVIEW; SCIENTIFIC COMPARISON NOT RUN.** Phase 2 adds pinned GSM8K preparation, leakage checks, a deterministic numeric/restricted-symbolic evaluator, paired mock/replay/explicitly gated real benchmark tooling, SQLite checkpoints, metrics, and correctness-only label preparation. MATH is deferred because official data access was not verified. No real model calls or model-quality claims were made. See [Phase 2 results status](docs/experiments/phase2_results_status.md).
+**Phase 1: MERGED. Phase 2: MERGED. Phase 3A: OFFLINE INFRASTRUCTURE IN DEVELOPMENT; REAL PILOT NOT RUN.** Phase 2 adds pinned GSM8K preparation, leakage checks, deterministic evaluation, paired mock/replay/real benchmark tooling, SQLite checkpoints, and metrics. Phase 3A adds offline candidate-model research, real-run preflight, sampling/review/reporting, and leakage-safe future label export. Paid invocation remains blocked because there is no verified token-counting plus provider-enforced hard spend bound. No model-quality evidence, training labels, or router training is claimed. See [Phase 2 status](docs/experiments/phase2_results_status.md) and [Phase 3A status](docs/experiments/phase3a_results_status.md).
 
 ## Architecture
 
@@ -53,6 +53,19 @@ uv run python -m experiments.benchmark run --config configs/benchmark_mock.yaml 
 Mock mode only validates the pipeline and is never research accuracy evidence. Real calls require an explicit YAML opt-in, approval reference, environment credentials, and remain subject to Phase 1 fail-closed cost guards. See `docs/experiments/` for dataset, evaluator, benchmark, metrics, and reproducibility protocols.
 
 If `TUTOR_PER_REQUEST_BUDGET_USD` is configured, real provider requests fail closed because Phase 1 has no verified token/pricing estimator. This prevents an unknown estimate from being treated as zero; it is not dynamic budget optimization. LiteLLM-calculated cost is labeled separately from provider-reported usage and actual billed cost. Actual billing remains unknown unless supplied by a provider.
+
+## Phase 3A offline research tools
+
+See [candidate model/pricing research](docs/experiments/model_selection.md), [collection protocol](docs/experiments/phase3a_protocol.md), [preflight and spend gate](docs/experiments/phase3a_preflight.md), and [training-label schema](docs/experiments/phase3a_training_data.md). Commands:
+
+```bash
+uv run python -m experiments.preflight --config configs/phase3a_pilot.example.yaml --dry-run
+uv run python -m experiments.collection_plan --split validation --samples 10 --seed 42
+uv run python -m experiments.analysis review-sample --records artifacts/runs/<run-id>/records.jsonl
+uv run python -m experiments.training_data --records artifacts/runs/<run-id>/records.jsonl
+```
+
+Preflight and all tests are offline. The example pilot config does not authorize a real run. The benchmark runner refuses the normal LiteLLM path until a provider-specific hard spending bound is verified and implemented. Real pilot and collection status remain `NOT_RUN`.
 
 ## Docker
 

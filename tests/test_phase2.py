@@ -126,8 +126,11 @@ def test_real_provider_requires_explicit_gate_and_approval():
         "small_model_identifier": "a",
         "strong_model_identifier": "b",
     }
-    with pytest.raises(ValueError):
-        BenchmarkConfig.model_validate(data)
+    # A real config can be loaded for offline preflight without granting execution.
+    dry_run_config = BenchmarkConfig.model_validate(data)
+    assert dry_run_config.mode == "real" and not dry_run_config.allow_real_provider
+    with pytest.raises(ValueError, match="allow_real_provider"):
+        BenchmarkConfig.model_validate({**data, "allow_real_provider": True})
     config = BenchmarkConfig.model_validate(
         {**data, "allow_real_provider": True, "experiment_approval_id": "approved-1"}
     )

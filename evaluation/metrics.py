@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from collections import Counter, defaultdict
 from collections.abc import Iterable
 from math import ceil, sqrt
@@ -103,7 +104,86 @@ def summarize_records(records: Iterable[ExperimentRecord]) -> dict:
         "groups": summary,
         "paired_outcomes": _paired_outcomes(records),
         "paired_records": _paired_table(records),
+        "paired_statistics": paired_statistics(records),
         "scientific_note": "Mock and replay records are not model-quality evidence.",
+    }
+
+
+def paired_statistics(
+    records: list[ExperimentRecord], *, seed: int = 42, bootstrap_samples: int = 2000
+) -> dict:
+    """Paired accuracy difference CI; resampling unit is the sample, never a model row."""
+    if any(record.execution_mode != "real" for record in records):
+        return {
+            "status": "NOT_COMPUTED_NONREAL_RECORDS",
+            "paired_determinate_n": 0,
+            "bootstrap_95_percentile_ci": None,
+            "oracle_upper_bound_accuracy": None,
+            "scientific_note": "Bootstrap summaries are not computed for mock or replay records.",
+        }
+    by_sample: dict[tuple[str, str], dict[str, ExperimentRecord]] = defaultdict(dict)
+    for record in records:
+        by_sample[(record.split, record.sample_id)][record.model_tier] = record
+    paired: list[tuple[bool, bool]] = []
+    incomplete = 0
+    unknown = 0
+    failed = 0
+    ineligible = 0
+    oracle_values: list[bool] = []
+    for pair in by_sample.values():
+        small, strong = pair.get("small"), pair.get("strong")
+        if small is None or strong is None:
+            incomplete += 1
+            continue
+        if small.execution_status != "success" or strong.execution_status != "success":
+            failed += 1
+            continue
+        if not small.scientific_eligible or not strong.scientific_eligible:
+            ineligible += 1
+            continue
+        a = small.evaluation.is_correct if small.evaluation else None
+        b = strong.evaluation.is_correct if strong.evaluation else None
+        if a is None or b is None:
+            unknown += 1
+            continue
+        paired.append((a, b))
+        oracle_values.append(a or b)
+    if not paired:
+        return {
+            "status": "NO_DETERMINATE_ELIGIBLE_PAIRS",
+            "paired_determinate_n": 0,
+            "incomplete_pairs": incomplete,
+            "execution_failure_pairs": failed,
+            "scientifically_ineligible_pairs": ineligible,
+            "unknown_evaluation_pairs": unknown,
+            "small_minus_strong_accuracy": None,
+            "bootstrap_95_percentile_ci": None,
+            "oracle_upper_bound_accuracy": None,
+            "oracle_label": "Oracle upper bound — requires access to realized model outcomes.",
+        }
+    differences = [int(a) - int(b) for a, b in paired]
+    observed = sum(differences) / len(differences)
+    rng = random.Random(seed)
+    draws = sorted(
+        sum(rng.choice(differences) for _ in differences) / len(differences)
+        for _ in range(bootstrap_samples)
+    )
+    lo = draws[max(0, int(0.025 * bootstrap_samples))]
+    hi = draws[min(bootstrap_samples - 1, int(0.975 * bootstrap_samples))]
+    return {
+        "status": "COMPUTED_REAL_SCIENTIFICALLY_ELIGIBLE_PAIRS",
+        "paired_determinate_n": len(paired),
+        "incomplete_pairs": incomplete,
+        "execution_failure_pairs": failed,
+        "scientifically_ineligible_pairs": ineligible,
+        "unknown_evaluation_pairs": unknown,
+        "bootstrap_seed": seed,
+        "bootstrap_samples": bootstrap_samples,
+        "small_minus_strong_accuracy": observed,
+        "bootstrap_95_percentile_ci": {"lower": lo, "upper": hi},
+        "oracle_upper_bound_accuracy": sum(oracle_values) / len(oracle_values),
+        "oracle_label": "Oracle upper bound — requires access to realized model outcomes.",
+        "not_deployable_router_evidence": True,
     }
 
 

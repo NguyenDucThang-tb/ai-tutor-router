@@ -1,0 +1,22 @@
+# Review and preflight only. This file does not authorize provider calls.
+mode: real
+provider: litellm
+small_model_identifier: openai/gpt-4.1-mini-2025-04-14
+strong_model_identifier: openai/gpt-4.1-2025-04-14
+max_samples: 10
+max_requests: 20
+max_run_budget_usd: 2.00
+per_request_budget_usd: 0.10
+concurrency: 1
+timeout_seconds: 30
+execution_lease_seconds: 900
+temperature: 0
+max_tokens: 256
+seed: 42
+max_retries: 0
+retry_delay_seconds: 0
+fallback_policy: disabled
+allow_real_provider: false
+allow_paid_retries: false
+allow_uncertain_reissue: false
+router_strategy: always_small

@@ -200,6 +200,17 @@ async def run_benchmark(
 ) -> tuple[RunManifest, list[ExperimentRecord]]:
     if config.mode == "replay":
         raise ValueError("replay mode uses replay_run(), not run_benchmark()")
+    if config.mode == "real" and (
+        not config.allow_real_provider or not config.experiment_approval_id
+    ):
+        raise ValueError(
+            "real provider execution requires allow_real_provider and an approval reference"
+        )
+    if config.mode == "real" and (gateway is None or isinstance(gateway, LiteLLMGateway)):
+        raise ValueError(
+            "paid invocation blocked: run experiments.preflight and provide a verified hard "
+            "spend-bound implementation; current providers have no certified bound"
+        )
     if sha256_records(records) != source_manifest.dataset_content_sha256:
         raise ValueError("benchmark records do not match the dataset manifest content hash")
     split_counts = {split: 0 for split in ("train", "validation", "test")}
