@@ -63,6 +63,9 @@ class GatewayRequest:
     retry_delay_seconds: float
     fallback_model_identifier: str | None = None
     budget_limit_usd: float | None = None
+    temperature: float | None = None
+    max_tokens: int | None = None
+    seed: int | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,7 @@ class GatewayResult:
     latency_ms: float
     attempts: tuple[ExecutionAttempt, ...]
     final_attempt_cost: CostInfo = field(default_factory=CostInfo)
+    retry_delay_ms: float = 0.0
 
 
 def aggregate_attempt_costs(
@@ -192,6 +196,7 @@ class LiteLLMGateway:
     async def complete(self, request: GatewayRequest) -> GatewayResult:
         started = time.perf_counter()
         attempts: list[ExecutionAttempt] = []
+        retry_delay_ms = 0.0
         if request.budget_limit_usd is not None:
             # No token-price estimator is configured in Phase 1. Refuse the paid call
             # instead of treating an unknown estimate as zero or checking post-spend.
@@ -236,6 +241,7 @@ class LiteLLMGateway:
                         latency_ms=(time.perf_counter() - started) * 1000,
                         attempts=tuple(attempts),
                         final_attempt_cost=cost,
+                        retry_delay_ms=retry_delay_ms,
                     )
                 except GatewayError:
                     raise
@@ -279,7 +285,9 @@ class LiteLLMGateway:
                     }
                     if retryable and retry_index < retries:
                         if request.retry_delay_seconds:
+                            delay_started = time.perf_counter()
                             await asyncio.sleep(request.retry_delay_seconds)
+                            retry_delay_ms += (time.perf_counter() - delay_started) * 1000
                         continue
                     # Configured failover is allowed only for transient failures or an
                     # unsupported primary model; auth/invalid-response failures stop here.
@@ -303,6 +311,7 @@ class LiteLLMGateway:
                         attempts,
                         aggregate_attempt_costs(attempts),
                         attempts[-1].cost if attempts else None,
+                        retry_delay_ms,
                     ) from None
         category = attempts[-1].error_category or ErrorCategory.TEMPORARY_PROVIDER_FAILURE
         raise GatewayError(
@@ -311,6 +320,7 @@ class LiteLLMGateway:
             attempts,
             aggregate_attempt_costs(attempts),
             attempts[-1].cost if attempts else None,
+            retry_delay_ms,
         )
 
     async def _invoke(self, model: str, request: GatewayRequest) -> Any:
@@ -326,6 +336,12 @@ class LiteLLMGateway:
             "api_key": self.api_key,
             "metadata": {"request_id": request.request_id},
         }
+        if request.temperature is not None:
+            kwargs["temperature"] = request.temperature
+        if request.max_tokens is not None:
+            kwargs["max_tokens"] = request.max_tokens
+        if request.seed is not None:
+            kwargs["seed"] = request.seed
         if self.api_base:
             kwargs["api_base"] = self.api_base
         completion = self._get_completion()

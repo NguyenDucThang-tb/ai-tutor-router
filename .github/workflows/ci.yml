@@ -29,12 +29,19 @@ jobs:
       - name: Install project and test dependencies
         run: uv sync --frozen --extra dev
       - name: Compile Python sources
-        run: uv run python -m compileall -q app tests
+        run: uv run python -m compileall -q app datasets evaluation experiments tests
       - name: Lint
-        run: uv run ruff check app tests
+        run: uv run ruff check app datasets evaluation experiments tests
+      - name: Formatting
+        run: uv run ruff format --check app datasets evaluation experiments tests
       - name: Test (mock only)
         env:
           TUTOR_ENVIRONMENT: test
           TUTOR_PROVIDER: mock
           TUTOR_AUTH_ENABLED: "false"
         run: uv run pytest
+      - name: Offline paired benchmark and replay coverage
+        env:
+          TUTOR_ENVIRONMENT: test
+          TUTOR_PROVIDER: mock
+        run: uv run pytest tests/test_phase2.py::test_offline_benchmark_is_paired_and_completed_calls_are_not_repeated tests/test_phase2.py::test_replay_matches_source_hash_and_re_evaluates
