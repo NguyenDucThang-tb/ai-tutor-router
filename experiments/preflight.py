@@ -14,13 +14,25 @@ from datasets.validation import load_processed_dataset
 from experiments.collection_plan import validate_collection_plan
 from experiments.config import BenchmarkConfig, load_config
 from experiments.model_catalog import resolve_model
+from experiments.paid_execution_gate import assess_paid_execution
 from experiments.pricing import estimate_usd
 from experiments.prompts import PROMPT_SHA256
-from experiments.runner import scientific_eligibility_reasons
+from experiments.provider_capabilities import resolve_capability
+from experiments.runner import run_id_for, scientific_eligibility_reasons
+from experiments.store import RunStore
 
 
 def _check(checks: list[dict], status: str, name: str, detail: str) -> None:
     checks.append({"status": status, "check": name, "detail": detail})
+
+
+def _usd_micro_units(value: float | None) -> int | None:
+    if value is None:
+        return None
+    micros = Decimal(str(value)) * Decimal(1_000_000)
+    if micros != micros.to_integral_value():
+        return None
+    return int(micros)
 
 
 def make_report(
@@ -110,6 +122,21 @@ def make_report(
             )
         else:
             _check(checks, "PASS", f"{tier}_model", model.model_id)
+        capability = resolve_capability(
+            config.small_model_identifier if tier == "small" else config.strong_model_identifier
+        )
+        if capability is None:
+            _check(checks, "BLOCKED", f"{tier}_capability", "provider capability is not verified")
+        else:
+            _check(
+                checks,
+                "BLOCKED" if not capability.supports_provable_run_bound else "PASS",
+                f"{tier}_capability",
+                f"input counting={capability.input_token_method}; output cap="
+                f"{capability.output_token_bound}; account access={capability.account_access}; "
+                f"hard run bound={capability.supports_provable_run_bound}; "
+                f"billing control={capability.billing_control}",
+            )
     if small and strong and small.provider != strong.provider:
         _check(
             checks, "WARNING", "provider_pair", "models use different providers and pricing systems"
@@ -131,6 +158,16 @@ def make_report(
         _check(checks, "PASS", "experiment_approval", "approval reference is configured")
     else:
         _check(checks, "FAIL", "experiment_approval", "explicit approval reference is required")
+
+    paid_gate = assess_paid_execution(config)
+    _check(
+        checks,
+        paid_gate.status,
+        "paid_execution_gate",
+        ",".join(paid_gate.reason_codes)
+        if paid_gate.reason_codes
+        else "all admission controls passed",
+    )
     if config.max_run_budget_usd is None:
         _check(checks, "FAIL", "run_budget", "max_run_budget_usd must be explicit")
     else:
@@ -143,6 +180,23 @@ def make_report(
             "PASS",
             "per_request_budget",
             f"configured USD {config.per_request_budget_usd:.6f}",
+        )
+        if _usd_micro_units(config.per_request_budget_usd) is None:
+            _check(
+                checks,
+                "FAIL",
+                "per_request_budget_precision",
+                "budget must be an integer number of micro-USD",
+            )
+    if (
+        config.max_run_budget_usd is not None
+        and _usd_micro_units(config.max_run_budget_usd) is None
+    ):
+        _check(
+            checks,
+            "FAIL",
+            "run_budget_precision",
+            "budget must be an integer number of micro-USD",
         )
 
     retries = config.max_retries + (1 if config.fallback_policy == "operational" else 0)
@@ -213,9 +267,54 @@ def make_report(
     )
 
     checkpoint = "not_checked"
+    budget_cap_micros = _usd_micro_units(config.max_run_budget_usd)
+    ledger = {
+        "run_id": None,
+        "local_exposure_micros_usd": 0,
+        "uncertain_exposure_micros_usd": 0,
+        "observed_usage_micros_usd": 0,
+        "request_reservations": 0,
+        "execution_status_counts": {},
+        "run_cap_micros_usd": budget_cap_micros,
+        "remaining_local_budget_micros_usd": budget_cap_micros,
+        "scope_note": "local SQLite ledger only; external/shared-account usage is not included",
+    }
     if run_dir:
         checkpoint_path = run_dir / "run.sqlite3"
         checkpoint = "exists" if checkpoint_path.is_file() else "not_found"
+        if checkpoint_path.is_file() and manifest is not None and selected:
+            run_id = run_id_for(
+                config,
+                selected,
+                plan_data.get("plan_sha256") if plan_data is not None else None,
+            )
+            ledger["run_id"] = run_id
+            store = RunStore(checkpoint_path)
+            try:
+                store.stored_manifest(run_id)
+            except KeyError:
+                checkpoint = "exists_without_matching_run"
+            else:
+                reservations = store.budget_reservations(run_id)
+                ledger["local_exposure_micros_usd"] = sum(
+                    item["exposure_micros"] for item in reservations
+                )
+                ledger["uncertain_exposure_micros_usd"] = sum(
+                    item["exposure_micros"]
+                    for item in reservations
+                    if item["status"] == "uncertain"
+                )
+                ledger["observed_usage_micros_usd"] = sum(
+                    item["observed_micros"] or 0 for item in reservations
+                )
+                ledger["request_reservations"] = sum(
+                    item["reserved_requests"] for item in store.request_reservations(run_id)
+                )
+                ledger["execution_status_counts"] = store.statuses(run_id)
+                if budget_cap_micros is not None:
+                    ledger["remaining_local_budget_micros_usd"] = (
+                        budget_cap_micros - ledger["local_exposure_micros_usd"]
+                    )
         _check(
             checks,
             "WARNING",
@@ -262,6 +361,7 @@ def make_report(
         },
         "pricing_is_actual_billing": False,
         "checkpoint": checkpoint,
+        "budget_ledger": ledger,
         "checks": checks,
     }
 

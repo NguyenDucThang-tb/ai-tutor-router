@@ -42,6 +42,13 @@ from datasets.schemas import DatasetManifest, DatasetRecord
 from evaluation.evaluator import EVALUATOR_VERSION, evaluate_answer
 from experiments.collection_plan import validate_collection_plan
 from experiments.config import BenchmarkConfig
+from experiments.exposure import (
+    ExposureCalculator,
+    ProviderExposureCalculator,
+    UnboundedExposureError,
+    attempt_model_envelope,
+)
+from experiments.paid_execution_gate import assess_paid_execution
 from experiments.prompts import PROMPT_SHA256, PROMPT_TEMPLATE, PROMPT_VERSION
 from experiments.records import ExecutionMetrics, ExperimentRecord, RunManifest
 from experiments.store import ExecutionClaim, RunStore
@@ -214,6 +221,7 @@ def create_run_manifest(
         small_fallback_identifier=config.small_fallback_identifier,
         strong_fallback_identifier=config.strong_fallback_identifier,
         budget_limit_usd=config.per_request_budget_usd,
+        max_run_budget_usd=config.max_run_budget_usd,
         pricing_source=config.pricing_source,
         pricing_effective_date=config.pricing_effective_date,
         experiment_approval_id=config.experiment_approval_id,
@@ -240,11 +248,12 @@ async def run_benchmark(
         raise ValueError(
             "real provider execution requires allow_real_provider and an approval reference"
         )
-    if config.mode == "real" and (gateway is None or isinstance(gateway, LiteLLMGateway)):
-        raise ValueError(
-            "paid invocation blocked: run experiments.preflight and provide a verified hard "
-            "spend-bound implementation; current providers have no certified bound"
-        )
+    if config.mode == "real":
+        decision = assess_paid_execution(config, gateway=gateway)
+        if decision.status != "PASS":
+            raise ValueError(
+                "paid invocation blocked by centralized gate: " + ",".join(decision.reason_codes)
+            )
     if sha256_records(records) != source_manifest.dataset_content_sha256:
         raise ValueError("benchmark records do not match the dataset manifest content hash")
     split_counts = {split: 0 for split in ("train", "validation", "test")}
@@ -409,7 +418,15 @@ async def _execute_one(
     gateway: Gateway,
     store: RunStore,
     owner_id: str,
+    *,
+    _test_exposure_calculator: ExposureCalculator | None = None,
 ) -> None:
+    """Execute one claimed task.
+
+    ``_test_exposure_calculator`` is a private offline seam used only by the
+    deterministic integration harness. The public runner never accepts it and
+    still applies ``assess_paid_execution`` before constructing work.
+    """
     request_attempt_limit = config.max_retries + 1
     if config.fallback_policy == "operational" and config.mode == "real":
         request_attempt_limit += 1
@@ -496,28 +513,6 @@ async def _execute_one(
     invoked = False
     gateway_started: float | None = None
     try:
-        store.mark_invoked(
-            claim,
-            provisional,
-            {
-                "request_id": request_id,
-                "provider": gateway.provider,
-                "requested_model_identifier": model_identifier,
-                "fallback_model_identifier": fallback_identifier,
-                "prompt_version": PROMPT_VERSION,
-                "prompt_sha256": PROMPT_SHA256,
-                "user_content_sha256": hashlib.sha256(sample.question.encode()).hexdigest(),
-                "reserved_requests": request_attempt_limit,
-                "paid_retry_approval_id": config.paid_retry_approval_id
-                if claim.prior_status in {"provider_failure", "success"}
-                else None,
-                "uncertain_reissue_approval_id": config.uncertain_reissue_approval_id
-                if claim.prior_status == "uncertain"
-                else None,
-            },
-            now=time.time(),
-        )
-        invoked = True
         gateway_request = GatewayRequest(
             request_id=request_id,
             model_identifier=model_identifier,
@@ -532,6 +527,48 @@ async def _execute_one(
             max_tokens=config.max_tokens,
             seed=config.seed,
         )
+        if config.mode == "real":
+            calculator = _test_exposure_calculator or ProviderExposureCalculator()
+            exposure = calculator.calculate(
+                config,
+                gateway_request,
+                attempt_model_envelope(config, tier),
+            )
+            if exposure.amount_micros_usd <= 0:
+                raise UnboundedExposureError("exposure bound must be positive")
+            if not exposure.provenance:
+                raise UnboundedExposureError("exposure bound is missing audit provenance")
+            store.reserve_budget(
+                claim,
+                exposure.amount_micros_usd,
+                pricing_provenance=exposure.provenance,
+                now=time.time(),
+            )
+        store.mark_invoked(
+            claim,
+            provisional,
+            {
+                "request_id": request_id,
+                "provider": gateway.provider,
+                "requested_model_identifier": model_identifier,
+                "fallback_model_identifier": fallback_identifier,
+                "prompt_version": PROMPT_VERSION,
+                "prompt_sha256": PROMPT_SHA256,
+                "user_content_sha256": hashlib.sha256(sample.question.encode()).hexdigest(),
+                "reserved_requests": request_attempt_limit,
+                "reserved_exposure_micros_usd": (
+                    exposure.amount_micros_usd if config.mode == "real" else None
+                ),
+                "paid_retry_approval_id": config.paid_retry_approval_id
+                if claim.prior_status in {"provider_failure", "success"}
+                else None,
+                "uncertain_reissue_approval_id": config.uncertain_reissue_approval_id
+                if claim.prior_status == "uncertain"
+                else None,
+            },
+            now=time.time(),
+        )
+        invoked = True
         gateway_started = time.perf_counter()
         result = await _complete_with_lease(
             gateway, gateway_request, store, claim, config.execution_lease_seconds

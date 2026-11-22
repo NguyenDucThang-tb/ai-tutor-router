@@ -19,9 +19,10 @@ class CandidateModel:
     maximum_output_tokens: int | None = None
     context_tokens: int | None = None
     notes: str = ""
+    status: str = "documented_current"
 
 
-# Prices are USD per 1M uncached text tokens, verified 2026-11-21.
+# Prices are USD per 1M uncached text tokens, checked against official pages 2026-11-22.
 # Missing limits and account access are explicitly not inferred from a pricing page.
 CANDIDATES = {
     "openai_gpt41_mini": CandidateModel(
@@ -30,21 +31,23 @@ CANDIDATES = {
         "small",
         Decimal("0.40"),
         Decimal("1.60"),
-        "https://platform.openai.com/pricing/",
-        "https://platform.openai.com/docs/models/gpt-4.1-mini",
-        date(2026, 11, 21),
-        notes="Frozen dated model ID; account and region availability unverified.",
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-4.1-mini",
+        date(2026, 11, 22),
+        notes="Official model page marks this dated ID deprecated; not eligible for new pilot.",
+        status="deprecated",
     ),
     "openai_gpt41": CandidateModel(
         "openai",
         "openai/gpt-4.1-2025-04-14",
         "strong",
-        Decimal("1.50"),
-        Decimal("6.00"),
-        "https://platform.openai.com/pricing/",
-        "https://platform.openai.com/docs/models/gpt-4.1",
-        date(2026, 11, 21),
-        notes="Frozen dated model ID; account and region availability unverified.",
+        Decimal("2.00"),
+        Decimal("8.00"),
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-4.1",
+        date(2026, 11, 22),
+        notes="Official model page marks this dated ID deprecated; not eligible for new pilot.",
+        status="deprecated",
     ),
     "anthropic_haiku55": CandidateModel(
         "anthropic",
@@ -54,7 +57,7 @@ CANDIDATES = {
         Decimal("0.50"),
         "https://platform.claude.com/docs/en/about-claude/pricing",
         "https://platform.claude.com/docs/en/about-claude/model-deprecations",
-        date(2026, 11, 21),
+        date(2026, 11, 22),
         notes="Base pricing is for prompts up to 100k tokens; higher tier pricing applies above.",
     ),
     "anthropic_sonnet55": CandidateModel(
@@ -65,7 +68,7 @@ CANDIDATES = {
         Decimal("10.00"),
         "https://platform.claude.com/docs/en/about-claude/pricing",
         "https://platform.claude.com/docs/en/about-claude/model-deprecations",
-        date(2026, 11, 21),
+        date(2026, 11, 22),
         notes="Base uncached text-token rates; account and region availability unverified.",
     ),
     "gemini_flash_lite": CandidateModel(
@@ -76,19 +79,19 @@ CANDIDATES = {
         Decimal("2.50"),
         "https://ai.google.dev/gemini-api/docs/pricing",
         "https://ai.google.dev/gemini-api/docs/models",
-        date(2026, 11, 21),
-        notes="Paid standard tier; free-tier data-use terms are excluded.",
+        date(2026, 11, 22),
+        notes="Paid standard tier through 2026-12-31; input/output thinking; free-tier data-use excluded.",
     ),
     "gemini_flash": CandidateModel(
         "gemini",
-        "gemini/gemini-3.5-flash",
+        "gemini/gemini-3.8-flash",
         "strong",
-        Decimal("1.50"),
-        Decimal("9.00"),
+        Decimal("0.75"),
+        Decimal("3.75"),
         "https://ai.google.dev/gemini-api/docs/pricing",
         "https://ai.google.dev/gemini-api/docs/models",
-        date(2026, 11, 21),
-        notes="Paid standard tier; thinking tokens billed at output rate.",
+        date(2026, 11, 22),
+        notes="Paid standard tier through 2026-12-31; thinking tokens billed at output rate.",
     ),
 }
 
