@@ -111,6 +111,8 @@ class RunManifest(BaseModel):
     pricing_source: str | None
     pricing_effective_date: str | None
     experiment_approval_id: str | None
+    approval_artifact_sha256: str | None = None
+    approval_config_sha256: str | None = None
     # Read-only compatibility for manifests produced before recovery controls
     # moved into the SQLite recovery authorization audit.
     allow_paid_retries: bool = Field(default=False, exclude=True)

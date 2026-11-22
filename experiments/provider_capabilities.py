@@ -37,6 +37,42 @@ GOOGLE_PRICE = "https://ai.google.dev/gemini-api/docs/pricing"
 GOOGLE_BILLING = "https://ai.google.dev/gemini-api/docs/billing"
 
 CAPABILITIES = {
+    "openai/gpt-6-luna": ProviderCapability(
+        provider="openai",
+        model_id="openai/gpt-6-luna",
+        identity_url="https://developers.openai.com/api/docs/models/gpt-6-luna",
+        pricing_url="https://developers.openai.com/api/docs/pricing",
+        verified_on=VERIFICATION_DATE,
+        input_token_method=None,
+        output_token_bound=128000,
+        billing_control="https://help.openai.com/en/articles/9186755-managing-projects-in-the-api-platform",
+        pricing_version="openai-gpt-6-luna-2026-11-22-standard",
+        input_usd_per_million=Decimal("0.10"),
+        output_usd_per_million=Decimal("0.50"),
+        cached_input_usd_per_million=Decimal("0.01"),
+        limitation=(
+            "Exact locked LiteLLM model mapping, reasoning/cache/tool categories, account access, "
+            "and external bill bound are not verified."
+        ),
+    ),
+    "openai/gpt-6.2-sol": ProviderCapability(
+        provider="openai",
+        model_id="openai/gpt-6.2-sol",
+        identity_url="https://developers.openai.com/api/docs/models/gpt-6.2-sol",
+        pricing_url="https://developers.openai.com/api/docs/pricing",
+        verified_on=VERIFICATION_DATE,
+        input_token_method=None,
+        output_token_bound=128000,
+        billing_control="https://help.openai.com/en/articles/9186755-managing-projects-in-the-api-platform",
+        pricing_version="openai-gpt-6.2-sol-2026-11-22-standard",
+        input_usd_per_million=Decimal("2.00"),
+        output_usd_per_million=Decimal("10.00"),
+        cached_input_usd_per_million=Decimal("0.10"),
+        limitation=(
+            "Exact locked LiteLLM model mapping, reasoning/cache/tool categories, account access, "
+            "and external bill bound are not verified."
+        ),
+    ),
     "openai/gpt-4.1-mini-2025-04-14": ProviderCapability(
         provider="openai",
         model_id="openai/gpt-4.1-mini-2025-04-14",

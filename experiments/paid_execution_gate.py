@@ -17,7 +17,9 @@ class GateDecision:
     details: tuple[str, ...]
 
 
-def assess_paid_execution(config: BenchmarkConfig, *, gateway=None) -> GateDecision:
+def assess_paid_execution(
+    config: BenchmarkConfig, *, gateway=None, approval_verified: bool = False
+) -> GateDecision:
     """Assess structural controls; gateway injection is never an authorization."""
     reasons: list[str] = []
     failures: list[str] = []
@@ -26,6 +28,8 @@ def assess_paid_execution(config: BenchmarkConfig, *, gateway=None) -> GateDecis
         failures.append("paid_mode_provider_mismatch")
     if not config.allow_real_provider or not config.experiment_approval_id:
         failures.append("explicit_experiment_approval_missing")
+    if not approval_verified:
+        reasons.append("signed_frozen_config_approval_missing")
 
     for model_id in (config.small_model_identifier, config.strong_model_identifier):
         today = datetime.now(UTC).date()

@@ -34,6 +34,7 @@ class BenchmarkConfig(BaseModel):
     pricing_effective_date: str | None = None
     allow_real_provider: bool = False
     experiment_approval_id: str | None = None
+    paid_approval_artifact: str | None = None
     allow_paid_retries: bool = False
     paid_retry_approval_id: str | None = None
     retry_interrupted: bool = False
@@ -68,6 +69,8 @@ class BenchmarkConfig(BaseModel):
             raise ValueError("uncertain reissue approval is only valid in real mode")
         if self.mode != "real" and self.paid_retry_approval_id is not None:
             raise ValueError("paid retry approval is only valid in real mode")
+        if self.paid_approval_artifact is not None and self.mode != "real":
+            raise ValueError("paid approval artifact is only valid in real mode")
         if self.fallback_policy == "disabled" and (
             self.small_fallback_identifier or self.strong_fallback_identifier
         ):

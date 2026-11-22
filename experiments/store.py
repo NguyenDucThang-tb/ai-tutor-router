@@ -952,6 +952,8 @@ def _manifest_compatibility_hash(material: dict) -> str:
     compatible.setdefault("collection_plan_split", None)
     compatible.setdefault("selection_policy", "legacy_sorted_prefix_v1")
     compatible.setdefault("max_run_budget_usd", None)
+    compatible.setdefault("approval_artifact_sha256", None)
+    compatible.setdefault("approval_config_sha256", None)
     return hashlib.sha256(
         json.dumps(compatible, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()

@@ -738,6 +738,8 @@ def test_recovery_approval_keeps_identity_but_run_budget_is_immutable():
         source_hash="a" * 64,
     )
     assert run_id_for(base, [row]) == run_id_for(recovery, [row])
+    approval_file = base.model_copy(update={"paid_approval_artifact": "approved.json"})
+    assert run_id_for(base, [row]) == run_id_for(approval_file, [row])
     increased = base.model_copy(update={"max_run_budget_usd": 2})
     assert run_id_for(base, [row]) != run_id_for(increased, [row])
 

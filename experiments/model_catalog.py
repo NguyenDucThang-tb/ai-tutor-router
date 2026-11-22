@@ -25,6 +25,32 @@ class CandidateModel:
 # Prices are USD per 1M uncached text tokens, checked against official pages 2026-11-22.
 # Missing limits and account access are explicitly not inferred from a pricing page.
 CANDIDATES = {
+    "openai_gpt6_luna": CandidateModel(
+        "openai",
+        "openai/gpt-6-luna",
+        "small",
+        Decimal("0.10"),
+        Decimal("0.50"),
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-6-luna",
+        date(2026, 11, 22),
+        maximum_output_tokens=128000,
+        context_tokens=1050000,
+        notes="Reasoning output billed at output rates; exact locked LiteLLM mapping unverified.",
+    ),
+    "openai_gpt62_sol": CandidateModel(
+        "openai",
+        "openai/gpt-6.2-sol",
+        "strong",
+        Decimal("2.00"),
+        Decimal("10.00"),
+        "https://developers.openai.com/api/docs/pricing",
+        "https://developers.openai.com/api/docs/models/gpt-6.2-sol",
+        date(2026, 11, 22),
+        maximum_output_tokens=128000,
+        context_tokens=1050000,
+        notes="Current public rates; exact locked LiteLLM mapping unverified.",
+    ),
     "openai_gpt41_mini": CandidateModel(
         "openai",
         "openai/gpt-4.1-mini-2025-04-14",
@@ -96,6 +122,7 @@ CANDIDATES = {
 }
 
 PAIRS = {
+    "openai_gpt6": (CANDIDATES["openai_gpt6_luna"], CANDIDATES["openai_gpt62_sol"]),
     "openai_gpt41": (CANDIDATES["openai_gpt41_mini"], CANDIDATES["openai_gpt41"]),
     "anthropic_55": (CANDIDATES["anthropic_haiku55"], CANDIDATES["anthropic_sonnet55"]),
     "gemini_35": (CANDIDATES["gemini_flash_lite"], CANDIDATES["gemini_flash"]),
