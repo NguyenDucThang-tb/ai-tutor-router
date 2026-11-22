@@ -40,6 +40,7 @@ from datasets.gsm8k import raw_file_url as gsm8k_raw_file_url
 from datasets.provenance import sha256_records
 from datasets.schemas import DatasetManifest, DatasetRecord
 from evaluation.evaluator import EVALUATOR_VERSION, evaluate_answer
+from experiments.authorization import verify_approval_artifact
 from experiments.collection_plan import validate_collection_plan
 from experiments.config import BenchmarkConfig
 from experiments.exposure import (
@@ -72,6 +73,7 @@ def run_id_for(
         "uncertain_reissue_approval_id",
         "allow_paid_retries",
         "paid_retry_approval_id",
+        "paid_approval_artifact",
     ):
         identity_config.pop(control, None)
     material = {
@@ -147,6 +149,8 @@ def create_run_manifest(
     source_manifest: DatasetManifest,
     assigned_split: str,
     collection_plan: dict | None = None,
+    approval_artifact_sha256: str | None = None,
+    approval_config_sha256: str | None = None,
 ) -> RunManifest:
     selected_hash = sha256_records(records)
     ids_hash = hashlib.sha256(
@@ -225,6 +229,8 @@ def create_run_manifest(
         pricing_source=config.pricing_source,
         pricing_effective_date=config.pricing_effective_date,
         experiment_approval_id=config.experiment_approval_id,
+        approval_artifact_sha256=approval_artifact_sha256,
+        approval_config_sha256=approval_config_sha256,
         software_versions=packages,
         scientific_protocol_eligible=not eligibility_reasons,
         scientific_eligibility_reasons=eligibility_reasons,
@@ -249,10 +255,15 @@ async def run_benchmark(
             "real provider execution requires allow_real_provider and an approval reference"
         )
     if config.mode == "real":
-        decision = assess_paid_execution(config, gateway=gateway)
-        if decision.status != "PASS":
+        static_gate = assess_paid_execution(config, gateway=gateway)
+        static_blockers = tuple(
+            reason
+            for reason in static_gate.reason_codes
+            if reason != "signed_frozen_config_approval_missing"
+        )
+        if static_blockers:
             raise ValueError(
-                "paid invocation blocked by centralized gate: " + ",".join(decision.reason_codes)
+                "paid invocation blocked by centralized gate: " + ",".join(static_blockers)
             )
     if sha256_records(records) != source_manifest.dataset_content_sha256:
         raise ValueError("benchmark records do not match the dataset manifest content hash")
@@ -287,8 +298,34 @@ async def run_benchmark(
         selected = selected[: min(config.max_samples, request_sample_limit)]
     if not selected:
         raise ValueError(f"no records found in assigned split '{assigned_split}'")
+    approval_artifact_sha256 = None
+    approval_config_sha256 = None
+    if config.mode == "real":
+        approval_valid, _approval_detail = verify_approval_artifact(
+            config.paid_approval_artifact,
+            config=config,
+            records=list(selected),
+            manifest=source_manifest,
+            split=assigned_split,
+            collection_plan=collection_plan,
+        )
+        decision = assess_paid_execution(config, gateway=gateway, approval_verified=approval_valid)
+        if decision.status != "PASS":
+            raise ValueError(
+                "paid invocation blocked by centralized gate: " + ",".join(decision.reason_codes)
+            )
+        artifact_bytes = Path(config.paid_approval_artifact).read_bytes()
+        approval_artifact_sha256 = hashlib.sha256(artifact_bytes).hexdigest()
+        approval_document = json.loads(artifact_bytes)
+        approval_config_sha256 = approval_document["immutable_config_sha256"]
     manifest = create_run_manifest(
-        config, selected, source_manifest, assigned_split, collection_plan
+        config,
+        selected,
+        source_manifest,
+        assigned_split,
+        collection_plan,
+        approval_artifact_sha256,
+        approval_config_sha256,
     )
     manifest_key = _manifest_key(manifest)
     run_directory.mkdir(parents=True, exist_ok=True)

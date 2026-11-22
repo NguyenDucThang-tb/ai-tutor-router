@@ -11,6 +11,7 @@ from pathlib import Path
 
 from datasets.schemas import DatasetManifest
 from datasets.validation import load_processed_dataset
+from experiments.authorization import verify_approval_artifact
 from experiments.collection_plan import validate_collection_plan
 from experiments.config import BenchmarkConfig, load_config
 from experiments.model_catalog import resolve_model
@@ -154,12 +155,26 @@ def make_report(
         else "credential variable names present; values are not reported",
     )
 
-    if config.experiment_approval_id:
-        _check(checks, "PASS", "experiment_approval", "approval reference is configured")
-    else:
-        _check(checks, "FAIL", "experiment_approval", "explicit approval reference is required")
+    approval_valid = False
+    approval_detail = "dataset selection unavailable; approval could not be validated"
+    if manifest is not None and selected:
+        approval_valid, approval_detail = verify_approval_artifact(
+            config.paid_approval_artifact,
+            config=config,
+            records=list(selected),
+            manifest=manifest,
+            split=selected_split,
+            collection_plan=plan_data,
+            signing_key=env.get("TUTOR_PAID_APPROVAL_HMAC_KEY", ""),
+        )
+    _check(
+        checks,
+        "PASS" if approval_valid else "FAIL",
+        "signed_frozen_config_approval",
+        approval_detail,
+    )
 
-    paid_gate = assess_paid_execution(config)
+    paid_gate = assess_paid_execution(config, approval_verified=approval_valid)
     _check(
         checks,
         paid_gate.status,

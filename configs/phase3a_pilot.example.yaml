@@ -17,6 +17,7 @@ max_retries: 0
 retry_delay_seconds: 0
 fallback_policy: disabled
 allow_real_provider: false
+paid_approval_artifact: configs/phase3a_pilot.authorization.json
 allow_paid_retries: false
 allow_uncertain_reissue: false
 router_strategy: always_small

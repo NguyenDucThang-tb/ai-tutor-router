@@ -17,7 +17,11 @@
 
 ## Authorization and acceptance
 
-This is not spend approval. No experiment approval reference is embedded. Preflight performs no inference and must report `BLOCKED` while token/cost/account bounds remain unverified. The runner independently invokes the paid admission gate and refuses the injected gateway shortcut. A separate written approval must identify provider, exact pair, count, attempts, maximum spend and approval reference; that approval still cannot override a failed technical gate.
+This proposal is not spend approval. `configs/phase3a_pilot.authorization.json` binds the expected immutable provider, model pair, dataset revision and checksum, split, exact sample IDs, plan hash, prompt, generation settings, request/attempt envelope, and local budget values. It has a SHA-256 digest, null approver fields, `NOT_APPROVED`, and no signature. File presence or an editable YAML boolean cannot authorize a call.
+
+If a future review authorizes this exact run, the approval metadata must match `experiment_approval_id`; an HMAC signature must be generated outside this repository using the separately managed `TUTOR_PAID_APPROVAL_HMAC_KEY` with at least 32 bytes. The secret is never stored in source or printed. Preflight and the runner independently verify the signature and the exact current context. The run manifest stores both the signed artifact SHA-256 and immutable configuration SHA-256 for audit. The HMAC is integrity evidence for an authorization workflow, not proof of provider access, billing scope, or spend limits. The technical paid gate remains mandatory and currently fails closed. Do not set an approval status or key until the user separately authorizes a concrete experiment.
+
+Preflight performs no inference. The runner rejects missing, mismatched, unsigned, or tampered approval artifacts before run task creation and provider invocation. Injected gateways cannot authorize production paid execution. Even a valid signature would not override failed token, cost, account, or external-spend checks.
 
 After a separately approved and technically admitted run, retain per-model output, request/attempt IDs, input/output/reasoning usage, usage-derived cost, provider-account reconciliation, latencies, evaluations, failures, incomplete pairs, plan hash and source hashes. Report all 10 planned pairs, actual completed pairs, incomplete pairs and failures separately. Ten examples support only a pilot smoke of the protocol, not generalizable accuracy or savings claims.
 

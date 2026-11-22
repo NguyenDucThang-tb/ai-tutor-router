@@ -4,7 +4,7 @@ Research prototype for choosing a processing tier for text-based mathematics tut
 
 ## Current phase
 
-**Phase 1: MERGED. Phase 2: MERGED. Phase 3A: MERGED. Phase 3A-next: SPEND SAFETY UNDER REVIEW; REAL PILOT BLOCKED.** Phase 2 adds pinned GSM8K preparation, leakage checks, deterministic evaluation, paired mock/replay/real benchmark tooling, SQLite checkpoints, and metrics. Phase 3A adds collection plans and provenance-checked export. Phase 3A-next adds a durable local micro-USD exposure ledger and centralized fail-closed paid gate. Local arithmetic is not an external billing cap; no provider's account settings or access are verified, and published project caps may permit delayed overages. No model-quality evidence, training labels, paid inference, or router training is claimed. See [provider verification](docs/experiments/provider_verification.md), [spend safety](docs/experiments/spend_safety_design.md), and [pilot status](docs/experiments/phase3a_real_pilot_status.md).
+**Phases 0–3A-Next: MERGED. Phase 3A-Final: PROVIDER VERIFICATION IN REVIEW; REAL PILOT BLOCKED.** Phase 2 adds pinned GSM8K preparation, leakage checks, deterministic evaluation, paired mock/replay/real benchmark tooling, SQLite checkpoints, and metrics. Phase 3A adds collection plans and provenance-checked export. Phase 3A-Next adds a durable local micro-USD exposure ledger and centralized fail-closed benchmark gate. Phase 3A-Final adds offline-only provider verification and exact, signed approval binding. Local arithmetic is not an external billing cap; no provider account access or billing scope is verified, and published controls may permit delayed overages. The normal tutoring app's LiteLLM path is outside the benchmark ledger. No model-quality evidence, training labels, paid inference, or router training is claimed. See [provider verification](docs/experiments/provider_verification.md), [external spend guarantees](docs/experiments/external_spend_guarantee.md), [spend safety](docs/experiments/spend_safety_design.md), and [pilot status](docs/experiments/phase3a_real_pilot_status.md).
 
 ## Architecture
 
@@ -52,7 +52,7 @@ uv run python -m experiments.benchmark run --config configs/benchmark_mock.yaml 
 
 Mock mode only validates the pipeline and is never research accuracy evidence. Real calls require an explicit YAML opt-in, approval reference, environment credentials, and remain subject to Phase 1 fail-closed cost guards. See `docs/experiments/` for dataset, evaluator, benchmark, metrics, and reproducibility protocols.
 
-If `TUTOR_PER_REQUEST_BUDGET_USD` is configured, real provider requests fail closed because Phase 1 has no verified token/pricing estimator. This prevents an unknown estimate from being treated as zero; it is not dynamic budget optimization. LiteLLM-calculated cost is labeled separately from provider-reported usage and actual billed cost. Actual billing remains unknown unless supplied by a provider.
+If `TUTOR_PER_REQUEST_BUDGET_USD` is configured, the gateway fails closed because no verified token/pricing estimator is configured. With no such budget configured, the ordinary application LiteLLM route can call its provider directly; this route does not use the benchmark SQLite ledger or its paid gate. Treat that application path as unbounded provider spending and do not enable it for paid production until separate controls are implemented and verified. This statement is separate from benchmark-runner behavior. LiteLLM-calculated cost is labeled separately from provider-reported usage and actual billed cost.
 
 ## Phase 3A offline research tools
 
@@ -60,6 +60,7 @@ See [candidate model/pricing research](docs/experiments/model_selection.md), [co
 
 ```bash
 uv run python -m experiments.preflight --config configs/phase3a_pilot.example.yaml --dry-run
+uv run python -m experiments.provider_verify --config configs/phase3a_pilot.example.yaml --offline
 uv run python -m experiments.collection_plan --split validation --samples 10 --seed 42
 uv run python -m experiments.preflight --config configs/phase3a_pilot.example.yaml --collection-plan collection_plan.json
 uv run python -m experiments.benchmark run --config configs/benchmark_mock.yaml --collection-plan collection_plan.json
@@ -67,7 +68,7 @@ uv run python -m experiments.analysis review-sample --records artifacts/runs/<ru
 uv run python -m experiments.training_data --records artifacts/runs/<run-id>/records.jsonl --collection-plan collection_plan.json
 ```
 
-Preflight and all tests are offline. The example pilot config does not authorize a real run. The benchmark runner refuses the normal LiteLLM path until a provider-specific hard spending bound is verified and implemented. Real pilot and collection status remain `NOT_RUN`.
+Preflight and the provider verifier are offline. The verifier does not inspect credentials or contact account endpoints. The example pilot config and unsigned `NOT_APPROVED` artifact do not authorize a real run. The benchmark runner refuses the normal LiteLLM path until signed approval, provider-specific billable exposure, account access, and external spending controls pass. Real pilot and collection status remain `NOT_RUN`.
 
 ## Docker
 
