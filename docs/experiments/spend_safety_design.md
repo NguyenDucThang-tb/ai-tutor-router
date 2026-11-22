@@ -20,6 +20,38 @@ Risks included in review: unknown input tokenization and message framing; reason
 
 This ledger enforces local arithmetic only. A correct local ledger cannot establish a maximum provider charge if tokenization, billable categories, prices, or provider-side enforcement are not bounded. The current capability registry therefore gives no provider `supports_provable_run_bound=true`; real execution stays blocked.
 
+## Runner reservation lifecycle
+
+After acquiring a fenced claim, the real-mode worker constructs the final
+`GatewayRequest` and computes exposure for the complete possible attempt
+sequence: all configured primary retries and the single configured fallback
+request, when enabled. `ProviderExposureCalculator` requires an exact current
+model identity, current pricing provenance, complete billable categories, an
+admitted input-token upper bound that includes system text and request framing,
+and the configured output-token bound. It uses uncached input prices and rounds
+up to integer micro-USD. Unknown token counts or missing billing categories
+stop execution before reservation or provider invocation. Heuristic word or
+byte projections are never used as reservation maxima.
+
+The runner atomically reserves this amount against both immutable request and
+run caps, then persists invocation intent. That transition marks the reservation
+uncertain before the provider await. A reservation still held before invocation
+can be released by its owning claim if execution is known not to have started.
+After invocation intent, cancellation, timeout, process crash, or lease expiry
+retains exposure as uncertain. Result persistence records usage-derived cost
+as an observation and keeps at least the reserved exposure; it is not treated
+as a provider invoice. The existing fenced recovery process remains responsible
+for uncertain executions and cannot silently release or replay them.
+
+The supported `run_benchmark()` path checks the centralized paid gate before it
+creates a run directory or invokes a gateway. The gate still blocks real
+execution because account access, billable categories, exact request bounds,
+and an external run-level spend ceiling are not verified. A private
+`_execute_one()` seam allows an offline integration test to supply a
+deterministic fixture bound with a fake provider. The CLI and public runner do
+not expose that seam; it does not alter production gate results or authorize
+paid execution.
+
 ## Paid admission
 
 `paid_execution_gate.assess_paid_execution()` returns structured PASS/FAIL/BLOCKED. It checks approvals, exact model capability records, account verification, token support, output cap, explicit budgets, retry envelope, and fallback. A supplied gateway is classified as an untrusted adapter; it cannot establish production identity or spending guarantees. No real execution currently passes. This gate is evaluated in the benchmark runner before data processing or provider invocation.
@@ -35,6 +67,6 @@ Original run budgets stay in the SQLite manifest and are part of strict manifest
 - SQLite is single-host coordination. Separate database files or machines do not share caps.
 - Other processes using the same provider account are invisible to the local ledger.
 - Provider reports may lag and may not identify per-request actual charges.
-- The ledger is not wired to a provider-specific reservation calculator because no calculator is presently verified as a billable upper bound.
+- The runner is wired to the provider-specific calculator interface, but no current provider configuration supplies a verified billable upper bound, so the default calculator refuses real requests.
 - Provider admin state is not queried by preflight; account access and provider-side limits remain unverified.
 - The model request path uses LiteLLM; verified aliases and mapping behavior must be checked against the exact locked LiteLLM version before any future paid calls.

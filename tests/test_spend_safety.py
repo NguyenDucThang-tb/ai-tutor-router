@@ -3,18 +3,27 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, date, datetime
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 
 import pytest
 
+from app.errors import ErrorCategory, GatewayError
+from app.gateway import CostInfo, ExecutionAttempt, GatewayResult, aggregate_attempt_costs
+from app.routing import RouteDecision
 from datasets.provenance import sha256_records
 from datasets.schemas import DatasetManifest, DatasetRecord
 from experiments import model_catalog, provider_capabilities
 from experiments.config import BenchmarkConfig
+from experiments.exposure import (
+    ProviderExposureCalculator,
+    UnboundedExposureError,
+    VerifiedExposure,
+    attempt_model_envelope,
+)
 from experiments.paid_execution_gate import assess_paid_execution
 from experiments.provider_capabilities import price_provenance_is_current
 from experiments.records import ExperimentRecord
-from experiments.runner import _manifest_key, create_run_manifest, run_id_for
+from experiments.runner import _execute_one, _manifest_key, create_run_manifest, run_id_for
 from experiments.store import RunStore
 from experiments.token_accounting import CountKind, UnsupportedTokenCounter
 
@@ -135,6 +144,12 @@ def test_expired_unstarted_claim_releases_only_its_held_exposure(tmp_path):
     assert reservation["claim_token"] == first.token
     assert reservation["status"] == "released"
     assert reservation["exposure_micros"] == 0
+    store.reserve_budget(next_claim, 800, pricing_provenance={"version": "v2"}, now=103)
+    store.release_unstarted(first, now=104)
+    current = store.budget_reservations(manifest.run_id)[1]
+    assert current["claim_token"] == next_claim.token
+    assert current["status"] == "held"
+    assert current["exposure_micros"] == 800
 
 
 def test_invoked_budget_is_retained_as_uncertain_after_crash(tmp_path):
@@ -185,6 +200,449 @@ def test_paid_invocation_requires_monetary_reservation(tmp_path):
     )
     with pytest.raises(RuntimeError, match="monetary budget reservation is required"):
         store.mark_invoked(claim, record, {"model": "small"}, now=101)
+
+
+def test_real_mode_runner_reserves_before_isolated_fake_provider_invocation(tmp_path):
+    import asyncio
+    import time
+
+    store, manifest, row, config = _setup(tmp_path / "runs.sqlite3")
+    seen = {}
+
+    class TrustedOfflineFakeProvider:
+        provider = "litellm"
+
+        async def complete(self, request):
+            reservations = store.budget_reservations(manifest.run_id)
+            assert len(reservations) == 1
+            assert reservations[0]["status"] == "uncertain"
+            assert reservations[0]["reserved_micros"] == 700
+            assert reservations[0]["pricing_provenance"]["offline_fixture_bound"] is True
+            seen["request"] = request
+            attempt = ExecutionAttempt(
+                request_id=request.request_id,
+                attempt_number=1,
+                model_identifier=request.model_identifier,
+                provider=self.provider,
+                fallback=False,
+                latency_ms=1,
+                status="success",
+                cost=CostInfo(status="calculated", calculated_usd=0.0002),
+            )
+            cost = aggregate_attempt_costs((attempt,))
+            return GatewayResult(
+                request_id=request.request_id,
+                text="2",
+                model_identifier=request.model_identifier,
+                provider=self.provider,
+                usage=None,
+                cost=cost,
+                latency_ms=1,
+                attempts=(attempt,),
+                final_attempt_cost=attempt.cost,
+            )
+
+    class OfflineFixtureBound:
+        def calculate(self, config, request, model_identifiers):
+            assert request.system_prompt and request.user_content == row.question
+            assert model_identifiers == (config.small_model_identifier,)
+            return VerifiedExposure(
+                700,
+                {
+                    "offline_fixture_bound": True,
+                    "attempt_model_identifiers": list(model_identifiers),
+                },
+            )
+
+    decision = RouteDecision(
+        router_strategy="always_small",
+        selected_tier="small",
+        selected_model_id=config.small_model_identifier,
+        reason_code="fixture",
+        router_latency_ms=0,
+    )
+    asyncio.run(
+        _execute_one(
+            config,
+            row,
+            "small",
+            (time.perf_counter(), 0.0, decision),
+            time.perf_counter(),
+            manifest,
+            TrustedOfflineFakeProvider(),
+            store,
+            "offline-owner",
+            _test_exposure_calculator=OfflineFixtureBound(),
+        )
+    )
+    assert seen["request"].request_id
+    reservation = store.budget_reservations(manifest.run_id)[0]
+    assert reservation["status"] == "observed"
+    assert reservation["exposure_micros"] == 700
+    assert store.execution_state(manifest.run_id, row.sample_id, "small") == "success"
+
+
+def test_real_mode_default_exposure_calculator_fails_closed_before_provider(tmp_path):
+    import asyncio
+    import time
+
+    store, manifest, row, config = _setup(tmp_path / "runs.sqlite3")
+    calls = []
+
+    class NeverCallProvider:
+        provider = "litellm"
+
+        async def complete(self, request):
+            calls.append(request)
+            raise AssertionError("unbounded request must not reach provider")
+
+    decision = RouteDecision(
+        router_strategy="always_small",
+        selected_tier="small",
+        selected_model_id=config.small_model_identifier,
+        reason_code="fixture",
+        router_latency_ms=0,
+    )
+    with pytest.raises(UnboundedExposureError, match="unverified model identity"):
+        asyncio.run(
+            _execute_one(
+                config,
+                row,
+                "small",
+                (time.perf_counter(), 0.0, decision),
+                time.perf_counter(),
+                manifest,
+                NeverCallProvider(),
+                store,
+                "offline-owner",
+            )
+        )
+    assert calls == []
+    assert store.budget_reservations(manifest.run_id) == []
+    assert store.execution_state(manifest.run_id, row.sample_id, "small") == "pending"
+
+
+def test_insufficient_request_budget_prevents_provider_invocation(tmp_path):
+    import asyncio
+    import time
+
+    store, manifest, row, config = _setup(tmp_path / "runs.sqlite3")
+    calls = []
+
+    class NeverCallProvider:
+        provider = "litellm"
+
+        async def complete(self, request):
+            calls.append(request)
+            raise AssertionError("insufficient budget must not reach provider")
+
+    class OverCapBound:
+        def calculate(self, config, request, model_identifiers):
+            return VerifiedExposure(1001, {"verified_fixture_bound": True})
+
+    decision = RouteDecision(
+        router_strategy="always_small",
+        selected_tier="small",
+        selected_model_id=config.small_model_identifier,
+        reason_code="fixture",
+        router_latency_ms=0,
+    )
+    with pytest.raises(ValueError, match="per-request budget"):
+        asyncio.run(
+            _execute_one(
+                config,
+                row,
+                "small",
+                (time.perf_counter(), 0.0, decision),
+                time.perf_counter(),
+                manifest,
+                NeverCallProvider(),
+                store,
+                "offline-owner",
+                _test_exposure_calculator=OverCapBound(),
+            )
+        )
+    assert calls == []
+    assert store.budget_reservations(manifest.run_id) == []
+    assert store.execution_state(manifest.run_id, row.sample_id, "small") == "pending"
+
+
+def test_cancellation_before_intent_releases_claim_and_no_reservation(tmp_path):
+    import asyncio
+    import time
+
+    store, manifest, row, config = _setup(tmp_path / "runs.sqlite3")
+
+    class CancelBeforeIntent:
+        def calculate(self, config, request, model_identifiers):
+            raise asyncio.CancelledError
+
+    class NeverCallProvider:
+        provider = "litellm"
+
+        async def complete(self, request):
+            raise AssertionError("provider invocation must not start")
+
+    decision = RouteDecision(
+        router_strategy="always_small",
+        selected_tier="small",
+        selected_model_id=config.small_model_identifier,
+        reason_code="fixture",
+        router_latency_ms=0,
+    )
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            _execute_one(
+                config,
+                row,
+                "small",
+                (time.perf_counter(), 0.0, decision),
+                time.perf_counter(),
+                manifest,
+                NeverCallProvider(),
+                store,
+                "offline-owner",
+                _test_exposure_calculator=CancelBeforeIntent(),
+            )
+        )
+    assert store.budget_reservations(manifest.run_id) == []
+    assert store.execution_state(manifest.run_id, row.sample_id, "small") == "pending"
+
+
+def test_cancellation_after_intent_keeps_uncertain_exposure_across_restart(tmp_path):
+    import asyncio
+    import time
+
+    store, manifest, row, config = _setup(tmp_path / "runs.sqlite3")
+    started = None
+
+    class HangingFakeProvider:
+        provider = "litellm"
+
+        async def complete(self, request):
+            started.set()
+            await asyncio.Event().wait()
+
+    class OfflineFixtureBound:
+        def calculate(self, config, request, model_identifiers):
+            return VerifiedExposure(700, {"offline_fixture_bound": True})
+
+    decision = RouteDecision(
+        router_strategy="always_small",
+        selected_tier="small",
+        selected_model_id=config.small_model_identifier,
+        reason_code="fixture",
+        router_latency_ms=0,
+    )
+
+    async def exercise():
+        nonlocal started
+        started = asyncio.Event()
+        task = asyncio.create_task(
+            _execute_one(
+                config,
+                row,
+                "small",
+                (time.perf_counter(), 0.0, decision),
+                time.perf_counter(),
+                manifest,
+                HangingFakeProvider(),
+                store,
+                "offline-owner",
+                _test_exposure_calculator=OfflineFixtureBound(),
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(exercise())
+    restarted = RunStore(tmp_path / "runs.sqlite3")
+    reservation = restarted.budget_reservations(manifest.run_id)[0]
+    assert reservation["status"] == "uncertain"
+    assert reservation["exposure_micros"] == 700
+    assert restarted.execution_state(manifest.run_id, row.sample_id, "small") == "uncertain"
+
+
+def test_known_failed_attempt_keeps_reserved_exposure_and_audit(tmp_path):
+    import asyncio
+    import time
+
+    store, manifest, row, config = _setup(tmp_path / "runs.sqlite3")
+    attempt = ExecutionAttempt(
+        request_id="offline-request",
+        attempt_number=1,
+        model_identifier=config.small_model_identifier,
+        provider="litellm",
+        fallback=False,
+        latency_ms=1,
+        status="failed",
+        error_category=ErrorCategory.AUTHENTICATION_FAILURE,
+        cost=CostInfo(status="calculated", calculated_usd=0.0003),
+    )
+
+    class FailedFakeProvider:
+        provider = "litellm"
+
+        async def complete(self, request):
+            raise GatewayError(
+                ErrorCategory.AUTHENTICATION_FAILURE,
+                "fixture rejection",
+                [attempt],
+                aggregate_attempt_costs([attempt]),
+                attempt.cost,
+            )
+
+    class OfflineFixtureBound:
+        def calculate(self, config, request, model_identifiers):
+            return VerifiedExposure(
+                700,
+                {
+                    "offline_fixture_bound": True,
+                    "attempt_model_identifiers": list(model_identifiers),
+                },
+            )
+
+    decision = RouteDecision(
+        router_strategy="always_small",
+        selected_tier="small",
+        selected_model_id=config.small_model_identifier,
+        reason_code="fixture",
+        router_latency_ms=0,
+    )
+    asyncio.run(
+        _execute_one(
+            config,
+            row,
+            "small",
+            (time.perf_counter(), 0.0, decision),
+            time.perf_counter(),
+            manifest,
+            FailedFakeProvider(),
+            store,
+            "offline-owner",
+            _test_exposure_calculator=OfflineFixtureBound(),
+        )
+    )
+    reservation = RunStore(tmp_path / "runs.sqlite3").budget_reservations(manifest.run_id)[0]
+    assert reservation["status"] == "observed"
+    assert reservation["observed_micros"] == 300
+    assert reservation["exposure_micros"] == 700
+    assert store.execution_state(manifest.run_id, row.sample_id, "small") == "provider_failure"
+
+
+def test_retry_and_fallback_exposure_envelope_covers_every_attempt():
+    config = BenchmarkConfig(
+        mode="real",
+        provider="litellm",
+        small_model_identifier="provider/primary-small",
+        strong_model_identifier="provider/primary-strong",
+        small_fallback_identifier="provider/fallback-small",
+        strong_fallback_identifier="provider/fallback-strong",
+        fallback_policy="operational",
+        max_retries=2,
+        allow_paid_retries=True,
+        paid_retry_approval_id="offline-test-retry",
+    )
+    assert attempt_model_envelope(config, "small") == (
+        "provider/primary-small",
+        "provider/primary-small",
+        "provider/primary-small",
+        "provider/fallback-small",
+    )
+    assert len(attempt_model_envelope(config, "strong")) == config.max_retries + 2
+
+
+def test_provider_exposure_calculation_rejects_unknown_tokenizer(monkeypatch):
+    config = BenchmarkConfig(
+        mode="real",
+        provider="litellm",
+        small_model_identifier="gemini/gemini-3.5-flash-lite",
+        strong_model_identifier="gemini/gemini-3.8-flash",
+    )
+    from app.gateway import GatewayRequest
+
+    request = GatewayRequest(
+        request_id="offline",
+        model_identifier=config.small_model_identifier,
+        system_prompt="system",
+        user_content="user",
+        timeout_seconds=1,
+        max_retries=0,
+        retry_delay_seconds=0,
+        max_tokens=config.max_tokens,
+    )
+    capability = provider_capabilities.resolve_capability(config.small_model_identifier)
+    assert capability is not None
+    monkeypatch.setitem(
+        provider_capabilities.CAPABILITIES,
+        capability.model_id,
+        replace(capability, all_billable_categories_supported=True),
+    )
+    with pytest.raises(UnboundedExposureError, match="input token upper bound unavailable"):
+        ProviderExposureCalculator().calculate(config, request, (config.small_model_identifier,))
+
+
+def test_exposure_amount_covers_retries_and_fallback(monkeypatch):
+    from app.gateway import GatewayRequest
+
+    primary = "gemini/gemini-3.5-flash-lite"
+    fallback = "gemini/gemini-3.8-flash"
+    config = BenchmarkConfig(
+        mode="real",
+        provider="litellm",
+        small_model_identifier=primary,
+        strong_model_identifier="gemini/gemini-3.8-flash",
+        small_fallback_identifier=fallback,
+        strong_fallback_identifier="gemini/gemini-3.5-flash-lite",
+        fallback_policy="operational",
+        max_retries=1,
+        allow_paid_retries=True,
+        paid_retry_approval_id="offline-test-retry",
+        max_tokens=5,
+    )
+    for model_id in (primary, fallback):
+        capability = provider_capabilities.resolve_capability(model_id)
+        assert capability is not None
+        monkeypatch.setitem(
+            provider_capabilities.CAPABILITIES,
+            model_id,
+            replace(capability, all_billable_categories_supported=True),
+        )
+
+    class ExactFixtureCounter:
+        def count_messages(self, model_id, messages):
+            from experiments.token_accounting import CountKind, TokenCount
+
+            assert messages[0]["role"] == "system"
+            return TokenCount(10, "fixture-exact", "v1", CountKind.EXACT, True, True)
+
+    request = GatewayRequest(
+        request_id="offline",
+        model_identifier=primary,
+        system_prompt="system",
+        user_content="user",
+        timeout_seconds=1,
+        max_retries=1,
+        retry_delay_seconds=0,
+        fallback_model_identifier=fallback,
+        max_tokens=5,
+    )
+    model_sequence = attempt_model_envelope(config, "small")
+    exposure = ProviderExposureCalculator(ExactFixtureCounter()).calculate(
+        config, request, model_sequence
+    )
+    expected_usd = Decimal(2) * (
+        Decimal(10) * Decimal("0.30") + Decimal(5) * Decimal("2.50")
+    ) / Decimal(1_000_000) + (
+        Decimal(10) * Decimal("0.75") + Decimal(5) * Decimal("3.75")
+    ) / Decimal(1_000_000)
+    assert len(model_sequence) == 3
+    assert exposure.amount_micros_usd == int(
+        (expected_usd * Decimal(1_000_000)).to_integral_value(rounding=ROUND_CEILING)
+    )
+    assert exposure.provenance["attempt_model_identifiers"] == list(model_sequence)
 
 
 def test_unknown_local_token_count_is_not_a_zero_count():
