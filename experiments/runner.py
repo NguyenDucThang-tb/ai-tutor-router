@@ -42,6 +42,7 @@ from datasets.schemas import DatasetManifest, DatasetRecord
 from evaluation.evaluator import EVALUATOR_VERSION, evaluate_answer
 from experiments.collection_plan import validate_collection_plan
 from experiments.config import BenchmarkConfig
+from experiments.paid_execution_gate import assess_paid_execution
 from experiments.prompts import PROMPT_SHA256, PROMPT_TEMPLATE, PROMPT_VERSION
 from experiments.records import ExecutionMetrics, ExperimentRecord, RunManifest
 from experiments.store import ExecutionClaim, RunStore
@@ -214,6 +215,7 @@ def create_run_manifest(
         small_fallback_identifier=config.small_fallback_identifier,
         strong_fallback_identifier=config.strong_fallback_identifier,
         budget_limit_usd=config.per_request_budget_usd,
+        max_run_budget_usd=config.max_run_budget_usd,
         pricing_source=config.pricing_source,
         pricing_effective_date=config.pricing_effective_date,
         experiment_approval_id=config.experiment_approval_id,
@@ -240,11 +242,12 @@ async def run_benchmark(
         raise ValueError(
             "real provider execution requires allow_real_provider and an approval reference"
         )
-    if config.mode == "real" and (gateway is None or isinstance(gateway, LiteLLMGateway)):
-        raise ValueError(
-            "paid invocation blocked: run experiments.preflight and provide a verified hard "
-            "spend-bound implementation; current providers have no certified bound"
-        )
+    if config.mode == "real":
+        decision = assess_paid_execution(config, gateway=gateway)
+        if decision.status != "PASS":
+            raise ValueError(
+                "paid invocation blocked by centralized gate: " + ",".join(decision.reason_codes)
+            )
     if sha256_records(records) != source_manifest.dataset_content_sha256:
         raise ValueError("benchmark records do not match the dataset manifest content hash")
     split_counts = {split: 0 for split in ("train", "validation", "test")}

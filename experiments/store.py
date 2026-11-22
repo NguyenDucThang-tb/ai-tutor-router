@@ -11,6 +11,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from experiments.records import ExperimentRecord, RunManifest
@@ -79,6 +80,20 @@ class RunStore:
                     reserved_requests INTEGER NOT NULL CHECK(reserved_requests > 0),
                     status TEXT NOT NULL CHECK(status IN ('held','consumed')),
                     created_at_utc TEXT NOT NULL,
+                    FOREIGN KEY (run_id) REFERENCES runs(run_id)
+                );
+                CREATE TABLE IF NOT EXISTS budget_reservations (
+                    claim_token TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    sample_id TEXT NOT NULL,
+                    model_tier TEXT NOT NULL,
+                    reserved_micros INTEGER NOT NULL CHECK(reserved_micros >= 0),
+                    exposure_micros INTEGER NOT NULL CHECK(exposure_micros >= 0),
+                    observed_micros INTEGER,
+                    status TEXT NOT NULL CHECK(status IN ('held','uncertain','observed','released')),
+                    pricing_provenance_json TEXT NOT NULL,
+                    created_at_utc TEXT NOT NULL,
+                    updated_at_utc TEXT NOT NULL,
                     FOREIGN KEY (run_id) REFERENCES runs(run_id)
                 );
                 CREATE TABLE IF NOT EXISTS recovery_authorizations (
@@ -273,6 +288,11 @@ class RunStore:
                 connection.execute(
                     "DELETE FROM request_reservations WHERE claim_token=? AND status='held'",
                     (row["claim_token"],),
+                )
+                connection.execute(
+                    "UPDATE budget_reservations SET status='released',exposure_micros=0,"
+                    "updated_at_utc=? WHERE claim_token=? AND status='held'",
+                    (now_iso, row["claim_token"]),
                 )
                 connection.execute(
                     "UPDATE executions SET status=?,record_json=?,claim_token=NULL,owner_id=NULL,"
@@ -470,6 +490,16 @@ class RunStore:
             if reservation is None or reservation["status"] != "held":
                 connection.rollback()
                 raise RuntimeError("request budget reservation was lost before invocation")
+            if record.execution_mode == "real":
+                monetary = connection.execute(
+                    "SELECT status FROM budget_reservations WHERE claim_token=? AND run_id=?",
+                    (claim.token, claim.run_id),
+                ).fetchone()
+                if monetary is None or monetary["status"] != "held":
+                    connection.rollback()
+                    raise RuntimeError(
+                        "monetary budget reservation is required before paid invocation"
+                    )
             cursor = connection.execute(
                 "UPDATE executions SET status='in_flight',record_json=?,request_metadata_json=?,"
                 "updated_at_utc=?,claim_prior_status=NULL,claim_prior_record_json=NULL "
@@ -495,6 +525,11 @@ class RunStore:
             connection.execute(
                 "UPDATE request_reservations SET status='consumed' WHERE claim_token=?",
                 (claim.token,),
+            )
+            connection.execute(
+                "UPDATE budget_reservations SET status='uncertain',updated_at_utc=? "
+                "WHERE claim_token=? AND status='held'",
+                (datetime.fromtimestamp(now, UTC).isoformat(), claim.token),
             )
             connection.execute(
                 "UPDATE recovery_authorizations SET state='invocation_marked' "
@@ -534,6 +569,11 @@ class RunStore:
                 connection.execute(
                     "DELETE FROM request_reservations WHERE claim_token=? AND status='held'",
                     (claim.token,),
+                )
+                connection.execute(
+                    "UPDATE budget_reservations SET status='released',exposure_micros=0,"
+                    "updated_at_utc=? WHERE claim_token=? AND status='held'",
+                    (datetime.now(UTC).isoformat(), claim.token),
                 )
                 connection.execute(
                     "UPDATE recovery_authorizations SET state='not_invoked' "
@@ -598,6 +638,7 @@ class RunStore:
             if cursor.rowcount != 1:
                 connection.rollback()
                 raise RuntimeError("stale execution claim rejected by fencing token")
+            self._reconcile_budget_row(connection, claim.token, record)
             connection.execute(
                 "UPDATE recovery_authorizations SET state=? "
                 "WHERE claim_token=? AND state='invocation_marked'",
@@ -630,11 +671,151 @@ class RunStore:
                 connection.rollback()
                 raise RuntimeError("stale execution claim rejected while saving uncertainty")
             connection.execute(
+                "UPDATE budget_reservations SET status='uncertain',updated_at_utc=? "
+                "WHERE claim_token=? AND status IN ('held','uncertain')",
+                (datetime.now(UTC).isoformat(), claim.token),
+            )
+            connection.execute(
                 "UPDATE recovery_authorizations SET state='outcome_unknown' "
                 "WHERE claim_token=? AND state='invocation_marked'",
                 (claim.token,),
             )
             connection.commit()
+
+    def reserve_budget(
+        self,
+        claim: ExecutionClaim,
+        amount_micros: int,
+        *,
+        pricing_provenance: dict,
+        now: float,
+    ) -> None:
+        """Atomically reserve exposure against the immutable manifest run cap.
+
+        The caller must reserve a defensible maximum for the complete invocation
+        envelope. This transaction enforces local arithmetic; it does not prove
+        that provider billing itself is bounded by that amount.
+        """
+        if amount_micros < 0:
+            raise ValueError("budget reservation must be non-negative")
+        now_iso = datetime.fromtimestamp(now, UTC).isoformat()
+        provenance_json = json.dumps(pricing_provenance, sort_keys=True, separators=(",", ":"))
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            active = connection.execute(
+                "SELECT 1 FROM executions WHERE run_id=? AND sample_id=? AND model_tier=? "
+                "AND claim_token=? AND owner_id=? AND fencing_token=? AND status='claimed' "
+                "AND lease_expires_at>?",
+                (
+                    claim.run_id,
+                    claim.sample_id,
+                    claim.model_tier,
+                    claim.token,
+                    claim.owner_id,
+                    claim.fencing_token,
+                    now,
+                ),
+            ).fetchone()
+            if active is None:
+                connection.rollback()
+                raise RuntimeError("stale execution claim cannot reserve budget")
+            existing = connection.execute(
+                "SELECT reserved_micros,pricing_provenance_json FROM budget_reservations "
+                "WHERE claim_token=?",
+                (claim.token,),
+            ).fetchone()
+            if existing:
+                if (existing["reserved_micros"], existing["pricing_provenance_json"]) != (
+                    amount_micros,
+                    provenance_json,
+                ):
+                    connection.rollback()
+                    raise ValueError("budget reservation cannot be changed for an existing claim")
+                connection.commit()
+                return
+            run = connection.execute(
+                "SELECT manifest_json FROM runs WHERE run_id=?", (claim.run_id,)
+            ).fetchone()
+            manifest = json.loads(run["manifest_json"])
+            request_cap = _usd_to_micros(manifest.get("budget_limit_usd"))
+            run_cap = _usd_to_micros(manifest.get("max_run_budget_usd"))
+            if request_cap is None or run_cap is None:
+                connection.rollback()
+                raise ValueError("budget policy is missing from the immutable run manifest")
+            if amount_micros > request_cap:
+                connection.rollback()
+                raise ValueError("reservation exceeds the per-request budget")
+            exposure = int(
+                connection.execute(
+                    "SELECT COALESCE(SUM(exposure_micros),0) FROM budget_reservations "
+                    "WHERE run_id=? AND status!='released'",
+                    (claim.run_id,),
+                ).fetchone()[0]
+            )
+            if exposure + amount_micros > run_cap:
+                connection.rollback()
+                raise ValueError("reservation would exceed the cumulative run budget")
+            connection.execute(
+                "INSERT INTO budget_reservations(claim_token,run_id,sample_id,model_tier,"
+                "reserved_micros,exposure_micros,status,pricing_provenance_json,created_at_utc,"
+                "updated_at_utc) VALUES(?,?,?,?,?,?,'held',?,?,?)",
+                (
+                    claim.token,
+                    claim.run_id,
+                    claim.sample_id,
+                    claim.model_tier,
+                    amount_micros,
+                    amount_micros,
+                    provenance_json,
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            connection.commit()
+
+    def budget_reservations(self, run_id: str) -> list[dict]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT claim_token,run_id,sample_id,model_tier,reserved_micros,exposure_micros,"
+                "observed_micros,status,pricing_provenance_json,created_at_utc,updated_at_utc "
+                "FROM budget_reservations WHERE run_id=? ORDER BY created_at_utc,claim_token",
+                (run_id,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            item["pricing_provenance"] = json.loads(item.pop("pricing_provenance_json"))
+            results.append(item)
+        return results
+
+    @staticmethod
+    def _reconcile_budget_row(
+        connection: sqlite3.Connection, claim_token: str, record: ExperimentRecord
+    ) -> None:
+        row = connection.execute(
+            "SELECT reserved_micros,exposure_micros FROM budget_reservations "
+            "WHERE claim_token=? AND status IN ('uncertain','held')",
+            (claim_token,),
+        ).fetchone()
+        if row is None:
+            return
+        known = record.cost.known_calculated_usd
+        if known is None:
+            connection.execute(
+                "UPDATE budget_reservations SET status='uncertain',updated_at_utc=? "
+                "WHERE claim_token=?",
+                (datetime.now(UTC).isoformat(), claim_token),
+            )
+            return
+        observed = _usd_to_micros(known)
+        # Usage-derived cost is an observation, not a provider invoice. Keep at
+        # least the original reservation until independent billing reconciliation.
+        exposure = max(int(row["exposure_micros"]), observed or 0)
+        connection.execute(
+            "UPDATE budget_reservations SET status='observed',observed_micros=?,"
+            "exposure_micros=?,updated_at_utc=? WHERE claim_token=?",
+            (observed, exposure, datetime.now(UTC).isoformat(), claim_token),
+        )
 
     def list_records(self, run_id: str) -> list[ExperimentRecord]:
         with self._connection() as connection:
@@ -770,9 +951,25 @@ def _manifest_compatibility_hash(material: dict) -> str:
     compatible.setdefault("collection_plan_sample_ids_sha256", None)
     compatible.setdefault("collection_plan_split", None)
     compatible.setdefault("selection_policy", "legacy_sorted_prefix_v1")
+    compatible.setdefault("max_run_budget_usd", None)
     return hashlib.sha256(
         json.dumps(compatible, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def _usd_to_micros(value) -> int | None:
+    if value is None:
+        return None
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError("USD budget must be a decimal value") from exc
+    if not amount.is_finite() or amount < 0:
+        raise ValueError("USD budget must be finite and non-negative")
+    micros = amount * Decimal(1_000_000)
+    if micros != micros.to_integral_value():
+        raise ValueError("USD amounts must be expressible in integer micro-USD")
+    return int(micros)
 
 
 def _legacy_manifest_hash(material: dict) -> str:

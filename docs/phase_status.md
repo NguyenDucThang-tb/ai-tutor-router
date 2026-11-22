@@ -34,16 +34,16 @@ The actual pinned GSM8K preparation produced 8,792 samples (6,726 train, 747 val
 
 No model comparison, human quality assessment, paid API call, or scientific model-quality result is claimed. Real provider approval/model/pricing are not configured. CI and Docker checks for this phase are pending exact-head verification.
 
-## Phase 3A — Offline real-collection preparation: IMPLEMENTED FOR REVIEW / PAID RUN BLOCKED
+## Phase 3A — Offline real-collection preparation: MERGED / PAID RUN BLOCKED
 
 Added model candidate/pricing provenance, offline preflight and cost scenarios, deterministic stratified collection planning, human-review sample generation, paired bootstrap/oracle summaries, and a provenance-checked real-only label exporter with explicit query-feature separation. No real provider call, human annotation, model comparison, or router training was performed. See `docs/experiments/phase3a_*.md` and `model_selection.md`.
 
-Paid invocation remains blocked. Public prices and word-count scenarios cannot guarantee maximum billed cost; exact provider tokenizers and provider-side caps are not verified. The normal LiteLLM benchmark runner fails before invocation. Phase 3A infrastructure readiness is separate from scientific completion: pilot `NOT_RUN`, real collection `NOT_RUN`, labels unavailable, Phase 3B not started.
+Phase 3A was merged through PR #3 at `dc96aad2f5611a1cc628dade418d9e587f9f01ba`. Phase 3A-next adds official model verification notes, a provider-capability registry, an explicit token-accounting contract, a durable integer micro-USD exposure ledger, and a centralized gate that rejects unverified provider/account controls and arbitrary injected gateways. The ledger is locally concurrency-safe and crash-conservative but does not claim to cap provider charges. Current Gemini billing documentation describes project caps as experimental with delayed billing-data overage; account tier caps are shared across projects. No provider/account settings have been verified for this project. The 10-row pilot config proposes current Gemini model IDs but has no generated source-bound plan artifact yet. Paid invocation remains blocked before dataset processing. Pilot `NOT_RUN`, real collection `NOT_RUN`, labels unavailable, Phase 3B not started.
 
 ## Next gates
 
 1. Verify tests, dependency lock, lint, formatting, compile, Docker, and GitHub Actions on the exact Phase 2 head.
-2. Implement independently verified tokenizer-based maximum exposure calculations plus concurrency-safe spending reservations and a provider hard cap; then review explicit provider/model/sample/budget approval.
+2. Verify exact provider/model/account access and external spending controls; establish provider-specific maximum billable exposure including all token categories, then request separate explicit provider/model/sample/budget approval.
 3. Preserve test boundaries; future routing research can consume only determinate verified real correctness labels and must not call them pedagogical quality labels.
 
 Current readiness: Phase 1 is merged. Phase 2 provides an executable, data-backed evaluation foundation for review; no scientific conclusion is available.

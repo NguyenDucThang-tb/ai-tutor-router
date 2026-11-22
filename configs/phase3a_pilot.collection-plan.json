@@ -1,0 +1,38 @@
+{
+  "candidate_count": 747,
+  "dataset": "gsm8k",
+  "dataset_content_sha256": "aa75c686332c09e12ce6412571b32b7efae779dfc8696d3448b29a45e5542e4b",
+  "dataset_revision": "3101c7d5072418e28b9008a6636bde82a006892c",
+  "features_are_pre_execution": true,
+  "plan_sha256": "1d5065acc16b50c1521422ec2a912ed28a10bd483d905054fbdd24aefd642493",
+  "sample_ids": [
+    "gsm8k-train-000279",
+    "gsm8k-train-000288",
+    "gsm8k-train-001457",
+    "gsm8k-train-002506",
+    "gsm8k-train-002716",
+    "gsm8k-train-003336",
+    "gsm8k-train-003798",
+    "gsm8k-train-004196",
+    "gsm8k-train-004440",
+    "gsm8k-train-006450"
+  ],
+  "sample_ids_sha256": "077275a61e532506eab2d10c09d36960976253969380ca256af7b95cbcced5ed",
+  "schema_version": "phase3a-collection-plan-v1",
+  "seed": 42,
+  "selected_count": 10,
+  "split": "validation",
+  "stratification": "task_type x char_count quartile x math_symbol_count quartile; symbols are a query-derived complexity proxy, not a difficulty label; SHA-256 seeded within-stratum order; round-robin allocation",
+  "stratum_counts": {
+    "word_problem:length_q1:symbols_q1": 1,
+    "word_problem:length_q1:symbols_q3": 1,
+    "word_problem:length_q1:symbols_q4": 1,
+    "word_problem:length_q2:symbols_q1": 1,
+    "word_problem:length_q2:symbols_q3": 1,
+    "word_problem:length_q2:symbols_q4": 1,
+    "word_problem:length_q3:symbols_q1": 1,
+    "word_problem:length_q3:symbols_q3": 1,
+    "word_problem:length_q3:symbols_q4": 1,
+    "word_problem:length_q4:symbols_q1": 1
+  }
+}

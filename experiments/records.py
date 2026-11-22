@@ -107,6 +107,7 @@ class RunManifest(BaseModel):
     small_fallback_identifier: str | None
     strong_fallback_identifier: str | None
     budget_limit_usd: float | None
+    max_run_budget_usd: float | None = None
     pricing_source: str | None
     pricing_effective_date: str | None
     experiment_approval_id: str | None

@@ -4,7 +4,7 @@ Research prototype for choosing a processing tier for text-based mathematics tut
 
 ## Current phase
 
-**Phase 1: MERGED. Phase 2: MERGED. Phase 3A: OFFLINE INFRASTRUCTURE IN DEVELOPMENT; REAL PILOT NOT RUN.** Phase 2 adds pinned GSM8K preparation, leakage checks, deterministic evaluation, paired mock/replay/real benchmark tooling, SQLite checkpoints, and metrics. Phase 3A adds offline candidate-model research, real-run preflight, sampling/review/reporting, and leakage-safe future label export. Paid invocation remains blocked because there is no verified token-counting plus provider-enforced hard spend bound. No model-quality evidence, training labels, or router training is claimed. See [Phase 2 status](docs/experiments/phase2_results_status.md) and [Phase 3A status](docs/experiments/phase3a_results_status.md).
+**Phase 1: MERGED. Phase 2: MERGED. Phase 3A: MERGED. Phase 3A-next: SPEND SAFETY UNDER REVIEW; REAL PILOT BLOCKED.** Phase 2 adds pinned GSM8K preparation, leakage checks, deterministic evaluation, paired mock/replay/real benchmark tooling, SQLite checkpoints, and metrics. Phase 3A adds collection plans and provenance-checked export. Phase 3A-next adds a durable local micro-USD exposure ledger and centralized fail-closed paid gate. Local arithmetic is not an external billing cap; no provider's account settings or access are verified, and published project caps may permit delayed overages. No model-quality evidence, training labels, paid inference, or router training is claimed. See [provider verification](docs/experiments/provider_verification.md), [spend safety](docs/experiments/spend_safety_design.md), and [pilot status](docs/experiments/phase3a_real_pilot_status.md).
 
 ## Architecture
 

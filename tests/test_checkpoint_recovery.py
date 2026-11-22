@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -10,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from app.errors import ErrorCategory, GatewayError
-from app.gateway import CostInfo, ExecutionAttempt, GatewayResult
+from app.errors import ErrorCategory
+from app.gateway import CostInfo, ExecutionAttempt
 from datasets.provenance import sha256_records
 from datasets.schemas import DatasetManifest, DatasetRecord
 from evaluation.evaluator import evaluate_answer
 from experiments.config import BenchmarkConfig
-from experiments.records import ExperimentRecord, RunManifest
+from experiments.records import ExperimentRecord
 from experiments.runner import _manifest_key, create_run_manifest, run_benchmark, run_id_for
 from experiments.store import RunStore
 
@@ -385,251 +383,58 @@ def test_real_reissue_approval_config_is_explicit():
     assert run_id_for(accepted, [row]) == run_id_for(recovered, [row])
 
 
-def test_approved_paid_retry_resumes_original_checkpoint_and_audits_approval(tmp_path):
-    import asyncio
-
-    class RecoveringGateway:
-        provider = "litellm"
-
-        def __init__(self):
-            self.calls = 0
-
-        async def complete(self, request):
-            self.calls += 1
-            attempt = ExecutionAttempt(
-                request_id=request.request_id,
-                attempt_number=1,
-                model_identifier=request.model_identifier,
-                provider=self.provider,
-                fallback=False,
-                latency_ms=1,
-                status="failed" if self.calls <= 2 else "success",
-                error_category=ErrorCategory.AUTHENTICATION_FAILURE if self.calls <= 2 else None,
-                cost=CostInfo(status="unknown", attempt_count=1, unknown_attempt_count=1),
-            )
-            if self.calls <= 2:
-                raise GatewayError(ErrorCategory.AUTHENTICATION_FAILURE, "rejected", [attempt])
-            return GatewayResult(
-                request_id=request.request_id,
-                text="FINAL ANSWER: 2",
-                model_identifier=request.model_identifier,
-                provider=self.provider,
-                usage=None,
-                cost=attempt.cost,
-                latency_ms=1,
-                attempts=(attempt,),
-            )
-
-    async def exercise():
-        initial = BenchmarkConfig(
-            mode="real",
-            provider="litellm",
-            small_model_identifier="small",
-            strong_model_identifier="strong",
-            allow_real_provider=True,
-            experiment_approval_id="experiment-approval",
-            max_samples=1,
-            max_requests=4,
-            max_retries=0,
-            concurrency=1,
-        )
-        recovery = BenchmarkConfig(
-            **{
-                **initial.model_dump(),
-                "retry_failed": True,
-                "allow_paid_retries": True,
-                "paid_retry_approval_id": "recovery-approval-42",
-            }
-        )
-        row = sample(1).model_copy(update={"assigned_split": "validation"})
-        source = DatasetManifest(
-            dataset="synthetic-test",
-            source_organization="test",
-            source_url="local://fixture",
-            revision="fixture-v1",
-            license="CC0-1.0",
-            access_note="test",
-            downloaded_at_utc=datetime.now(UTC),
-            raw_files={},
-            transformation_history=["fixture"],
-            seed=42,
-            train_fraction=0.9,
-            near_duplicate_threshold=0.9,
-            assigned_split_counts={"train": 0, "validation": 1, "test": 0},
-            dataset_content_sha256=sha256_records([row]),
-            processed_file_sha256={},
-        )
-        gateway = RecoveringGateway()
-        run_directory = tmp_path / "original-run"
-        initial_manifest, failed = await run_benchmark(
-            initial, [row], source, run_directory, "validation", gateway
-        )
-        assert gateway.calls == 2
-        assert all(item.execution_status == "provider_failure" for item in failed)
-
-        # Emulate the checkpoint schema/hash written by the reviewed HEAD.
-        legacy_store = RunStore(run_directory / "run.sqlite3")
-        legacy_manifest = legacy_store.stored_manifest(initial_manifest.run_id)
-        legacy_manifest["allow_paid_retries"] = False
-        legacy_manifest["paid_retry_approval_id"] = None
-        legacy_hash_material = dict(legacy_manifest)
-        legacy_hash_material.pop("created_at_utc", None)
-        legacy_hash = hashlib.sha256(
-            json.dumps(legacy_hash_material, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        with legacy_store._connection() as connection:
-            connection.execute(
-                "UPDATE runs SET manifest_json=?,manifest_hash=? WHERE run_id=?",
-                (
-                    json.dumps(legacy_manifest, sort_keys=True, separators=(",", ":")),
-                    legacy_hash,
-                    initial_manifest.run_id,
-                ),
-            )
-            # The reviewed checkpoint predates request-reservation tables.
-            connection.execute(
-                "DELETE FROM request_reservations WHERE run_id=?",
-                (initial_manifest.run_id,),
-            )
-            connection.execute(
-                "DELETE FROM request_budget_migrations WHERE run_id=?",
-                (initial_manifest.run_id,),
-            )
-
-        assert run_id_for(initial, [row]) == run_id_for(recovery, [row])
-        recovered_manifest, recovered = await run_benchmark(
-            recovery, [row], source, run_directory, "validation", gateway
-        )
-        assert recovered_manifest.run_id == initial_manifest.run_id
-        assert gateway.calls == 4
-        assert all(item.execution_status == "success" for item in recovered)
-        assert all(len(item.attempts) == 2 for item in recovered)
-        assert all(
-            item.provenance["paid_retry_approval_id"] == "recovery-approval-42"
-            for item in recovered
-        )
-        store = RunStore(run_directory / "run.sqlite3")
-        assert store.stored_manifest(initial_manifest.run_id).get("allow_paid_retries") is False
-        assert RunManifest.model_validate(
-            store.stored_manifest(initial_manifest.run_id)
-        ).run_id == (initial_manifest.run_id)
-        audits = store.recovery_audit(initial_manifest.run_id)
-        assert len(audits) == 2
-        assert {item["approval_id"] for item in audits} == {"recovery-approval-42"}
-        assert all(item["prior_status"] == "provider_failure" for item in audits)
-        assert all(item["state"] == "success" for item in audits)
-        assert all(item["git_commit_sha"] for item in audits)
-        audit_artifact = [
-            json.loads(line)
-            for line in (run_directory / "recovery_audit.jsonl").read_text().splitlines()
-        ]
-        assert len(audit_artifact) == 2
-        assert {item["approval_id"] for item in audit_artifact} == {"recovery-approval-42"}
-        assert (
-            sum(
-                item["reserved_requests"]
-                for item in store.request_reservations(initial_manifest.run_id)
-            )
-            == 4
-        )
-        incompatible = recovered_manifest.model_copy(
-            update={"max_tokens": recovered_manifest.max_tokens + 1}
-        )
-        incompatible = incompatible.model_copy(update={"run_id": initial_manifest.run_id})
-        with pytest.raises(ValueError, match="mismatched manifest"):
-            store.ensure_run(incompatible, _manifest_key(incompatible))
-        over_budget = recovered_manifest.model_copy(
-            update={"budget_limit_usd": 0.01, "run_id": initial_manifest.run_id}
-        )
-        with pytest.raises(ValueError, match="mismatched manifest"):
-            store.ensure_run(over_budget, _manifest_key(over_budget))
-
-        # An authorized retry does not opt completed executions into reruns.
-        await run_benchmark(recovery, [row], source, run_directory, "validation", gateway)
-        assert gateway.calls == 4
-
-    asyncio.run(exercise())
-
-
-def test_paid_recovery_cannot_exceed_original_request_limit(tmp_path):
+def test_paid_runner_rejects_injected_gateway_even_with_retry_approval(tmp_path):
     import asyncio
 
     class CountingGateway:
         provider = "litellm"
-
-        def __init__(self):
-            self.calls = 0
+        calls = 0
 
         async def complete(self, request):
             self.calls += 1
-            attempt = ExecutionAttempt(
-                request_id=request.request_id,
-                attempt_number=1,
-                model_identifier=request.model_identifier,
-                provider=self.provider,
-                fallback=False,
-                latency_ms=1,
-                status="failed",
-                error_category=ErrorCategory.AUTHENTICATION_FAILURE,
-                cost=CostInfo(status="unknown", attempt_count=1, unknown_attempt_count=1),
-            )
-            raise GatewayError(ErrorCategory.AUTHENTICATION_FAILURE, "rejected", [attempt])
+            raise AssertionError("paid provider adapter must not be invoked")
 
-    async def exercise():
-        initial = BenchmarkConfig(
-            mode="real",
-            provider="litellm",
-            small_model_identifier="small",
-            strong_model_identifier="strong",
-            allow_real_provider=True,
-            experiment_approval_id="experiment-approval",
-            max_samples=1,
-            max_requests=2,
-            max_retries=0,
-            concurrency=1,
+    config = BenchmarkConfig(
+        mode="real",
+        provider="litellm",
+        small_model_identifier="unverified-small",
+        strong_model_identifier="unverified-strong",
+        allow_real_provider=True,
+        experiment_approval_id="offline-approval-reference",
+        allow_paid_retries=True,
+        paid_retry_approval_id="offline-recovery-reference",
+        retry_failed=True,
+    )
+    gateway = CountingGateway()
+    with pytest.raises(ValueError, match="paid invocation blocked"):
+        asyncio.run(
+            run_benchmark(config, [], None, tmp_path / "blocked-run", "validation", gateway)
         )
-        recovery = BenchmarkConfig(
-            **{
-                **initial.model_dump(),
-                "retry_failed": True,
-                "allow_paid_retries": True,
-                "paid_retry_approval_id": "recovery-approval-43",
-            }
-        )
-        row = sample(1).model_copy(update={"assigned_split": "validation"})
-        source = DatasetManifest(
-            dataset="synthetic-test",
-            source_organization="test",
-            source_url="local://fixture",
-            revision="fixture-v1",
-            license="CC0-1.0",
-            access_note="test",
-            downloaded_at_utc=datetime.now(UTC),
-            raw_files={},
-            transformation_history=["fixture"],
-            seed=42,
-            train_fraction=0.9,
-            near_duplicate_threshold=0.9,
-            assigned_split_counts={"train": 0, "validation": 1, "test": 0},
-            dataset_content_sha256=sha256_records([row]),
-            processed_file_sha256={},
-        )
-        gateway = CountingGateway()
-        run_directory = tmp_path / "request-limit-run"
-        _, first = await run_benchmark(initial, [row], source, run_directory, "validation", gateway)
-        _, after = await run_benchmark(
-            recovery, [row], source, run_directory, "validation", gateway
-        )
-        assert gateway.calls == 2
-        assert all(item.execution_status == "provider_failure" for item in first + after)
-        store = RunStore(run_directory / "run.sqlite3")
-        assert all(
-            item["reserved_requests"] == 1
-            for item in store.request_reservations(run_id_for(initial, [row]))
-        )
-        assert store.recovery_audit(run_id_for(initial, [row])) == []
+    assert gateway.calls == 0
+    assert not (tmp_path / "blocked-run").exists()
 
-    asyncio.run(exercise())
+
+def test_paid_retry_cap_does_not_override_external_spend_gate(tmp_path):
+    import asyncio
+
+    config = BenchmarkConfig(
+        mode="real",
+        provider="litellm",
+        small_model_identifier="gemini/gemini-3.5-flash-lite",
+        strong_model_identifier="gemini/gemini-3.8-flash",
+        allow_real_provider=True,
+        experiment_approval_id="offline-approval-reference",
+        allow_paid_retries=True,
+        paid_retry_approval_id="offline-recovery-reference",
+        retry_failed=True,
+        max_samples=1,
+        max_requests=4,
+        per_request_budget_usd=0.1,
+        max_run_budget_usd=1,
+    )
+    with pytest.raises(ValueError, match="external_run_spend_bound_unverified"):
+        asyncio.run(run_benchmark(config, [], None, tmp_path / "blocked-run", "validation"))
+    assert not (tmp_path / "blocked-run").exists()
 
 
 def test_runner_cancellation_after_provider_start_persists_uncertain(tmp_path):
