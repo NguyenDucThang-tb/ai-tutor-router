@@ -1,7 +1,7 @@
 """Central paid-request admission; unknown external limits always block."""
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from experiments.config import BenchmarkConfig
@@ -28,6 +28,7 @@ def assess_paid_execution(config: BenchmarkConfig, *, gateway=None) -> GateDecis
         failures.append("explicit_experiment_approval_missing")
 
     for model_id in (config.small_model_identifier, config.strong_model_identifier):
+        today = datetime.now(UTC).date()
         capability = resolve_capability(model_id)
         if capability is None:
             reasons.append("provider_model_capability_unverified")
@@ -36,19 +37,32 @@ def assess_paid_execution(config: BenchmarkConfig, *, gateway=None) -> GateDecis
         if capability.status != "documented_current":
             reasons.append("provider_model_not_current")
         catalog_model = resolve_model(model_id)
-        if catalog_model is None or catalog_model.model_id != capability.model_id:
+        if (
+            catalog_model is None
+            or catalog_model.model_id != capability.model_id
+            or catalog_model.provider != capability.provider
+        ):
             reasons.append("provider_model_identity_mismatch")
-        elif catalog_model.status != "documented_current":
-            reasons.append("provider_model_not_current")
-        today = datetime.now(UTC).date()
-        if not price_provenance_is_current(capability, today=today):
-            reasons.append("price_provenance_expired")
+        else:
+            if catalog_model.status != "documented_current":
+                reasons.append("provider_model_not_current")
+            if (
+                catalog_model.input_usd_per_million != capability.input_usd_per_million
+                or catalog_model.output_usd_per_million != capability.output_usd_per_million
+            ):
+                reasons.append("pricing_catalog_mismatch")
+            if not price_provenance_is_current(capability, today=today) or today > (
+                catalog_model.retrieved + timedelta(days=capability.max_price_age_days)
+            ):
+                reasons.append("price_provenance_expired")
         if capability.account_access != "verified":
             reasons.append("provider_account_access_unverified")
         if capability.input_token_method is None:
             reasons.append("input_token_accounting_unverified")
         if capability.output_token_bound is None:
             reasons.append("output_token_bound_missing")
+        elif config.max_tokens > capability.output_token_bound:
+            reasons.append("configured_output_limit_exceeds_model_limit")
         if (
             not capability.pricing_version
             or capability.input_usd_per_million < 0

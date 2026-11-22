@@ -3,12 +3,13 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, date, datetime
+from decimal import Decimal
 
 import pytest
 
 from datasets.provenance import sha256_records
 from datasets.schemas import DatasetManifest, DatasetRecord
-from experiments import provider_capabilities
+from experiments import model_catalog, provider_capabilities
 from experiments.config import BenchmarkConfig
 from experiments.paid_execution_gate import assess_paid_execution
 from experiments.provider_capabilities import price_provenance_is_current
@@ -306,3 +307,34 @@ def test_expired_price_provenance_and_missing_output_bound_fail_closed(monkeypat
     )
     decision = assess_paid_execution(config)
     assert "output_token_bound_missing" in decision.reason_codes
+
+
+def test_catalog_price_mismatch_and_provider_model_identity_mismatch_fail_closed(monkeypatch):
+    model = model_catalog.resolve_model("gemini/gemini-3.8-flash")
+    capability = provider_capabilities.resolve_capability("gemini/gemini-3.8-flash")
+    assert model is not None and capability is not None
+    monkeypatch.setitem(
+        model_catalog.CANDIDATES,
+        "gemini_flash",
+        replace(model, input_usd_per_million=Decimal(999)),
+    )
+    config = BenchmarkConfig(
+        mode="real",
+        provider="litellm",
+        small_model_identifier="gemini/gemini-3.5-flash-lite",
+        strong_model_identifier="gemini/gemini-3.8-flash",
+        allow_real_provider=True,
+        experiment_approval_id="offline-test-only",
+        per_request_budget_usd=0.1,
+        max_run_budget_usd=1,
+    )
+    mismatch = assess_paid_execution(config)
+    assert "pricing_catalog_mismatch" in mismatch.reason_codes
+
+    monkeypatch.setitem(
+        provider_capabilities.CAPABILITIES,
+        capability.model_id,
+        replace(capability, provider="wrong-provider"),
+    )
+    identity = assess_paid_execution(config)
+    assert "provider_model_identity_mismatch" in identity.reason_codes
