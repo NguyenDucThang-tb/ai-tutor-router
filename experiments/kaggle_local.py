@@ -13,7 +13,9 @@ import json
 import math
 import os
 import statistics
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from numbers import Real
 from pathlib import Path
 from typing import Any
 
@@ -226,22 +228,67 @@ def _percentile95(values: Sequence[float]) -> float | None:
 
 
 def model_metrics(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    sample_ids = [record.get("sample_id") for record in records]
+    if len(sample_ids) != len(set(sample_ids)):
+        raise ValueError("model metrics records contain duplicate sample IDs")
     attempts = [record for record in records if record.get("status") != "not_run_input_too_long"]
-    successes = [record for record in records if record.get("status") == "completed"]
-    determinate = [
-        record
-        for record in successes
-        if (record.get("evaluation") or {}).get("status") in {"correct", "incorrect"}
-    ]
+    successes = [record for record in records if _generation_completed(record)]
+    latencies_by_id = {
+        record.get("sample_id"): _metric_value(record, "inference_latency_s") for record in records
+    }
+    tokens_by_id = {
+        record.get("sample_id"): _metric_value(record, "output_tokens", integer=True)
+        for record in records
+    }
+    allocated_by_id = {
+        record.get("sample_id"): _metric_value(record, "peak_gpu_allocated_bytes", integer=True)
+        for record in records
+    }
+    reserved_by_id = {
+        record.get("sample_id"): _metric_value(record, "peak_gpu_reserved_bytes", integer=True)
+        for record in records
+    }
+    determinate = [record for record in successes if _evaluation_determinate(record)]
     correct = sum(
         (record.get("evaluation") or {}).get("is_correct") is True for record in determinate
     )
     latencies = [
-        float(record["inference_latency_s"])
+        latencies_by_id.get(record.get("sample_id"))
         for record in successes
-        if record.get("inference_latency_s") is not None
+        if latencies_by_id.get(record.get("sample_id")) is not None
     ]
-    tokens = [int(record.get("output_tokens") or 0) for record in successes]
+    tokens = [
+        tokens_by_id.get(record.get("sample_id"))
+        for record in successes
+        if tokens_by_id.get(record.get("sample_id")) is not None
+    ]
+    allocated = [
+        allocated_by_id.get(record.get("sample_id"))
+        for record in successes
+        if allocated_by_id.get(record.get("sample_id")) is not None
+    ]
+    reserved = [
+        reserved_by_id.get(record.get("sample_id"))
+        for record in successes
+        if reserved_by_id.get(record.get("sample_id")) is not None
+    ]
+    throughput_records = [
+        (tokens_by_id.get(record.get("sample_id")), latencies_by_id.get(record.get("sample_id")))
+        for record in successes
+        if tokens_by_id.get(record.get("sample_id")) is not None
+        and latencies_by_id.get(record.get("sample_id")) is not None
+        and latencies_by_id[record.get("sample_id")] > 0
+    ]
+    throughput_latency = sum(latency for _, latency in throughput_records)
+    throughput_tokens = sum(token_count for token_count, _ in throughput_records)
+    missing_latency_count = sum(
+        latencies_by_id.get(record.get("sample_id")) is None
+        or latencies_by_id[record.get("sample_id")] <= 0
+        for record in successes
+    )
+    missing_token_count = sum(
+        tokens_by_id.get(record.get("sample_id")) is None for record in successes
+    )
     return {
         "attempted_samples": len(attempts),
         "successful_generations": len(successes),
@@ -254,21 +301,21 @@ def model_metrics(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "p95_inference_latency_s": _percentile95(latencies),
         "mean_output_tokens": statistics.mean(tokens) if tokens else None,
         "total_output_tokens": sum(tokens),
-        "peak_gpu_allocated_bytes": max(
-            (r.get("peak_gpu_allocated_bytes", 0) or 0 for r in successes), default=None
-        ),
-        "peak_gpu_reserved_bytes": max(
-            (r.get("peak_gpu_reserved_bytes", 0) or 0 for r in successes), default=None
-        ),
-        "tokens_per_second": (sum(tokens) / sum(latencies))
-        if latencies and sum(latencies)
-        else None,
+        "peak_gpu_allocated_bytes": max(allocated, default=None),
+        "peak_gpu_reserved_bytes": max(reserved, default=None),
+        "tokens_per_second": throughput_tokens / throughput_latency if throughput_latency else None,
+        "throughput_sample_count": len(throughput_records),
+        "missing_latency_count": missing_latency_count,
+        "missing_token_count": missing_token_count,
         "unknown_evaluation_samples": sum(
-            record.get("status") == "completed"
-            and (record.get("evaluation") or {}).get("status") not in {"correct", "incorrect"}
+            _generation_completed(record) and not _evaluation_determinate(record)
             for record in records
         ),
-        "failed_samples": sum(record.get("status") == "failed" for record in records),
+        "failed_samples": sum(
+            record.get("status") == "failed"
+            or (record.get("status") == "completed" and not _generation_completed(record))
+            for record in records
+        ),
         "not_executed_samples": sum(
             str(record.get("status", "")).startswith("not_run") for record in records
         ),
@@ -278,15 +325,28 @@ def model_metrics(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 def paired_rows(
     samples: Sequence[Any], small: Sequence[Mapping[str, Any]], strong: Sequence[Mapping[str, Any]]
 ) -> list[dict[str, Any]]:
-    small_by_id = {record["sample_id"]: record for record in small}
-    strong_by_id = {record["sample_id"]: record for record in strong}
+    planned_ids = {sample.sample_id for sample in samples}
+
+    def index_records(records):
+        indexed = {}
+        for record in records:
+            sample_id = record.get("sample_id")
+            if sample_id not in planned_ids or sample_id in indexed:
+                raise ValueError("paired results contain an unknown or duplicate sample ID")
+            indexed[sample_id] = record
+        return indexed
+
+    small_by_id = index_records(small)
+    strong_by_id = index_records(strong)
     rows = []
     for sample in samples:
         left, right = small_by_id.get(sample.sample_id), strong_by_id.get(sample.sample_id)
         left_correct = (left.get("evaluation") or {}).get("is_correct") if left else None
         right_correct = (right.get("evaluation") or {}).get("is_correct") if right else None
-        if left_correct is None or right_correct is None:
-            outcome = "at_least_one_unknown"
+        if not _generation_completed(left) or not _generation_completed(right):
+            outcome = "missing_generation"
+        elif not _evaluation_determinate(left) or not _evaluation_determinate(right):
+            outcome = "unknown_evaluation"
         elif left_correct and right_correct:
             outcome = "both_correct"
         elif left_correct:
@@ -315,6 +375,201 @@ def paired_rows(
             }
         )
     return rows
+
+
+def _metric_value(
+    record: Mapping[str, Any], field: str, *, integer: bool = False
+) -> int | float | None:
+    value = record.get(field)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TypeError(f"{field} must be numeric")
+    try:
+        numeric = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError(f"{field} must be a finite non-negative number") from exc
+    if not math.isfinite(numeric) or numeric < 0:
+        raise ValueError(f"{field} must be finite and non-negative")
+    if integer and not numeric.is_integer():
+        raise ValueError(f"{field} must be a finite non-negative integer")
+    return int(value) if integer else numeric
+
+
+def _generation_completed(record: Mapping[str, Any] | None) -> bool:
+    return bool(
+        record
+        and record.get("status") == "completed"
+        and isinstance(record.get("model_output"), str)
+        and record["model_output"].strip()
+    )
+
+
+def _evaluation_determinate(record: Mapping[str, Any] | None) -> bool:
+    if not record:
+        return False
+    evaluation = record.get("evaluation") or {}
+    return evaluation.get("status") in {"correct", "incorrect"} and isinstance(
+        evaluation.get("is_correct"), bool
+    )
+
+
+def paired_metrics(
+    samples: Sequence[Any],
+    small: Sequence[Mapping[str, Any]],
+    strong: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Partition planned pairs by generation and evaluation completeness.
+
+    A completed generation pair has a successful output string from both models.
+    A determinate pair additionally has correct/incorrect evaluator results for
+    both outputs. Unknown pairs generated both outputs but at least one result
+    was not determinately evaluated. Missing pairs lack a successful output from
+    either model. These last three counts partition planned pairs.
+    """
+    rows = paired_rows(samples, small, strong)
+    outcome_counts = dict(sorted(Counter(row["paired_outcome"] for row in rows).items()))
+    planned = len(samples)
+    completed = sum(row["paired_outcome"] != "missing_generation" for row in rows)
+    determinate = sum(
+        outcome_counts.get(name, 0)
+        for name in (
+            "both_correct",
+            "small_only_correct",
+            "strong_only_correct",
+            "both_incorrect",
+        )
+    )
+    unknown = outcome_counts.get("unknown_evaluation", 0)
+    missing = outcome_counts.get("missing_generation", 0)
+    if sum(outcome_counts.values()) != planned or determinate + unknown + missing != planned:
+        raise ValueError("paired outcome accounting does not partition the planned sample set")
+    return {
+        "planned_pair_count": planned,
+        "completed_generation_pair_count": completed,
+        "determinate_pair_count": determinate,
+        "unknown_pair_count": unknown,
+        "missing_pair_count": missing,
+        "paired_outcome_counts": outcome_counts,
+    }
+
+
+def notebook_scientific_status(
+    samples: Sequence[Any],
+    small_full: Sequence[Mapping[str, Any]],
+    strong_full: Sequence[Mapping[str, Any]],
+    small_smoke: Sequence[Mapping[str, Any]],
+    strong_smoke: Sequence[Mapping[str, Any]],
+    *,
+    small_model_id: str,
+    small_model_revision: str,
+    strong_model_id: str,
+    strong_model_revision: str,
+    expected_provenance: Mapping[str, Any],
+    required_evidence: bool,
+    full_run_marker: Mapping[str, Any] | None = None,
+) -> str:
+    """Derive display status from successful local outputs and verified provenance."""
+    planned_ids = [sample.sample_id for sample in samples]
+
+    def records_match(records, model_id, revision, run_mode, expected_ids, *, require_eval):
+        if len(records) != len(expected_ids):
+            return False
+        by_id = {}
+        for record in records:
+            sample_id = record.get("sample_id")
+            if sample_id not in expected_ids or sample_id in by_id:
+                return False
+            by_id[sample_id] = record
+        if set(by_id) != set(expected_ids):
+            return False
+        for record in by_id.values():
+            if (
+                record.get("schema_version") != LOCAL_RECORD_SCHEMA
+                or record.get("provider") != "local_transformers"
+                or record.get("scientific_eligible") is not False
+                or record.get("model_id") != model_id
+                or record.get("model_revision") != revision
+                or record.get("status") != "completed"
+                or not isinstance(record.get("model_output"), str)
+                or not record["model_output"].strip()
+                or record.get("run_mode") != run_mode
+                or any(record.get(key) != value for key, value in expected_provenance.items())
+            ):
+                return False
+            if require_eval and not _evaluation_determinate(record):
+                return False
+        return True
+
+    marker_fields = {
+        "schema_version": "kaggle-full-run-start-v1",
+        "status": "started",
+        "sample_ids": planned_ids,
+        "dataset_revision": expected_provenance.get("dataset_revision"),
+        "dataset_content_sha256": expected_provenance.get("dataset_content_sha256"),
+        "collection_plan_sha256": expected_provenance.get("collection_plan_sha256"),
+        "prompt_version": expected_provenance.get("prompt_version"),
+        "original_prompt_sha256": expected_provenance.get("original_prompt_sha256"),
+        "small_model_id": small_model_id,
+        "small_model_revision": small_model_revision,
+        "strong_model_id": strong_model_id,
+        "strong_model_revision": strong_model_revision,
+    }
+    marker_valid = bool(full_run_marker) and all(
+        full_run_marker.get(key) == value for key, value in marker_fields.items()
+    )
+
+    complete = (
+        required_evidence
+        and marker_valid
+        and records_match(
+            small_full,
+            small_model_id,
+            small_model_revision,
+            "full",
+            planned_ids,
+            require_eval=True,
+        )
+        and records_match(
+            strong_full,
+            strong_model_id,
+            strong_model_revision,
+            "full",
+            planned_ids,
+            require_eval=True,
+        )
+    )
+    if complete:
+        return "KAGGLE_PILOT_COMPLETED"
+
+    full_execution_started = full_run_marker is not None or bool(small_full or strong_full)
+    if full_execution_started:
+        return "KAGGLE_PILOT_INCOMPLETE"
+
+    smoke_id = planned_ids[:1]
+    smoke_passed = (
+        required_evidence
+        and bool(smoke_id)
+        and records_match(
+            small_smoke,
+            small_model_id,
+            small_model_revision,
+            "smoke",
+            smoke_id,
+            require_eval=False,
+        )
+        and records_match(
+            strong_smoke,
+            strong_model_id,
+            strong_model_revision,
+            "smoke",
+            smoke_id,
+            require_eval=False,
+        )
+    )
+    if smoke_passed:
+        return "KAGGLE_SMOKE_PASSED"
+    return "NOTEBOOK_READY_FOR_KAGGLE"
 
 
 def write_paired_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
