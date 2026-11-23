@@ -12,11 +12,16 @@ class Extraction:
 
 
 _FINAL_LINE = re.compile(r"(?im)^\s*FINAL ANSWER\s*:\s*(.*?)\s*$")
+_MARKDOWN_FINAL_LINE = re.compile(
+    r"(?im)^\s*\*\*\s*FINAL ANSWER\s*(?:\*\*)?\s*:\s*(?:\*\*)?\s*(.*?)\s*$"
+)
 _GSM_LINE = re.compile(r"(?m)^\s*####\s*(.*?)\s*$")
 
 
 def extract_model_final_answer(output: str) -> Extraction:
     matches = list(_FINAL_LINE.finditer(output))
+    if not matches:
+        matches = list(_MARKDOWN_FINAL_LINE.finditer(output))
     if not matches:
         return Extraction(None, "unparseable", "missing_final_answer_delimiter")
     if len(matches) != 1:

@@ -1,0 +1,868 @@
+{
+  "artifact_type": "posthoc_evaluation_comparison",
+  "raw_model_outputs_included": false,
+  "inference_rerun": false,
+  "scope": {
+    "planned_sample_count": 10,
+    "small_generation_records": 10,
+    "strong_generation_records": 10,
+    "paired_records": 10,
+    "model_response_records_evaluated": 20
+  },
+  "source_archive": {
+    "path_outside_repository": "/home/nguyenducthang/outputs.zip",
+    "sha256": "493cf8e85c549502a1bb050cdc5a38f18b22e72c2a69abac81eeea11ea455c7a",
+    "artifact_sha256": {
+      "small_results.jsonl": "6e1152929cf1647e0ca8340164f3660e45f600faf2ec5cc1f218fcce6dd5c2e9",
+      "strong_results.jsonl": "2ee32daab186e94e99752a94235a1cc063178e9cbea1248f9518ace15df0c0b2",
+      "paired_results.csv": "c03b04840aa7c4d7b51c8a57923bb3bc674f7cff056111726a7b9e130cdc230c",
+      "metrics.json": "b247c2b6cf8661cc8589d86f48e706de40b479a91e9389c228dfdc9cc8f879b3",
+      "environment.json": "d61ef9871effcefc225d9429888e73230e87bddcc30fff28ceb569659eba2acf",
+      "model_revisions.json": "b0aa8a33c342f8190b2324c2e568f14e6118b0a36e319fbc2705863d3bf721e5",
+      "run_manifest.json": "504070f7a6b155bcc3cde4f9d99d08aa1b420d72edbddc48210be9a30588d416",
+      "error_analysis.md": "05676aece74fa6a808f1e1eefb08c82f62c55b60b64a53fe80c58fc333375f8a",
+      "figures/paired_outcomes.png": "2be112144a5be88d8916229eaa20b6421fed99b5b1c9903957c7dbdcd93f31a3",
+      "figures/model_comparison.png": "f648b489c030c067f41e7d0b1f6d51159222164a7319edb050a2e4d14bec2c1c"
+    },
+    "temporary_extraction_directory": "/tmp/ai-tutor-kaggle-audit-0kg3q8gh"
+  },
+  "provenance": {
+    "dataset": "gsm8k",
+    "dataset_revision": "3101c7d5072418e28b9008a6636bde82a006892c",
+    "dataset_content_sha256": "aa75c686332c09e12ce6412571b32b7efae779dfc8696d3448b29a45e5542e4b",
+    "processed_validation_file_sha256": "456dae922cba6379c72348a9d76c6b21f3c3c23f3b2e0d9205ab33513754d540",
+    "split": "validation",
+    "collection_plan_sha256": "1d5065acc16b50c1521422ec2a912ed28a10bd483d905054fbdd24aefd642493",
+    "sample_ids_sha256": "077275a61e532506eab2d10c09d36960976253969380ca256af7b95cbcced5ed",
+    "sample_ids": [
+      "gsm8k-train-000279",
+      "gsm8k-train-000288",
+      "gsm8k-train-001457",
+      "gsm8k-train-002506",
+      "gsm8k-train-002716",
+      "gsm8k-train-003336",
+      "gsm8k-train-003798",
+      "gsm8k-train-004196",
+      "gsm8k-train-004440",
+      "gsm8k-train-006450"
+    ],
+    "repository_commit": "a657738d76c6e56d470eef1bc45a1954a556a665",
+    "environment_repository_commit": "a657738d76c6e56d470eef1bc45a1954a556a665",
+    "prompt_version": "math-direct-v1",
+    "prompt_sha256": "cbf5f86edcb3a0124cd39ecbf5350c9ba211e1689cf3109e250197a4a35ba560",
+    "provider": "local_transformers",
+    "execution_mode": "offline_or_local_gpu",
+    "scientific_eligible": false,
+    "scientific_status": "KAGGLE_PILOT_INCOMPLETE",
+    "generation": {
+      "batch_size": 1,
+      "do_sample": false,
+      "enable_thinking": false,
+      "fallback": false,
+      "max_input_tokens": 1024,
+      "max_new_tokens": 512,
+      "retry": false,
+      "seed": 42
+    },
+    "models": {
+      "small": {
+        "dtype": "float16",
+        "model_id": "Qwen/Qwen3-1.7B",
+        "revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e"
+      },
+      "strong": {
+        "model_id": "Qwen/Qwen3-8B",
+        "quantization": {
+          "compute_dtype": "float16",
+          "load_in_4bit": true,
+          "type": "nf4"
+        },
+        "revision": "b968826d9c46dd6066d109eabc6255188de91218"
+      }
+    },
+    "runtime_environment": {
+      "accelerate": "1.15.0",
+      "bitsandbytes": "0.50.2",
+      "cpu_ram": {
+        "available_bytes": 30011707392,
+        "total_bytes": 33658159104
+      },
+      "cuda": "13.0",
+      "gpu": {
+        "cpu_ram": {
+          "available_bytes": 31388368896,
+          "total_bytes": 33658159104
+        },
+        "cuda": "13.0",
+        "free_bytes": 15526068224,
+        "gpu_count": 2,
+        "gpu_index": 0,
+        "name": "Tesla T4",
+        "torch": "2.11.0+cu130",
+        "total_bytes": 15636037632,
+        "working_disk_free_bytes": 20940562432
+      },
+      "matplotlib": "3.10.0",
+      "numpy": "2.1.3",
+      "python": "3.13.16 (main, Oct  1 2026, 15:40:24) [GCC 13.3.0]",
+      "repository_commit": "a657738d76c6e56d470eef1bc45a1954a556a665",
+      "torch": "2.11.0+cu130",
+      "transformers": "5.20.2"
+    },
+    "posthoc_evaluator_source_sha256": {
+      "evaluation/answer_extraction.py": "8affae7e2c4892d9ac30a2350b1e8f4332ba8967b576001ddf9e0f343039d6a8",
+      "evaluation/evaluator.py": "715a813582716a3a495ef745178b4efd5ac18c123a218567209bfc1bf37cedfb",
+      "evaluation/numeric.py": "a78d0f82c85a65fa75aa12edeb7accd922a418e975985837f21d5d8ca541034e",
+      "evaluation/schemas.py": "a49343b24d49c3d8e60ce54ed7d34bbb68cf4868e634e8a6fcb8d247c9cd6fea"
+    }
+  },
+  "validation": {
+    "dataset_and_plan_loaded_with_frozen_pilot_validator": true,
+    "all_ids_unique_and_in_plan_order": true,
+    "all_dataset_references_match": true,
+    "all_model_ids_and_revisions_match": true,
+    "all_generations_completed": true,
+    "all_result_records_match_paired_csv": true,
+    "original_metrics_recomputed_exactly": true,
+    "stored_v1_evaluation_matches_v1_source_recomputation": true,
+    "v1_recomputed_records": 20,
+    "error_analysis_matches_notebook_cell29": true,
+    "v1_unparseable_sample_ids": [
+      "gsm8k-train-003798",
+      "gsm8k-train-000288",
+      "gsm8k-train-003336",
+      "gsm8k-train-006450"
+    ],
+    "notebook_snapshot_discrepancy": {
+      "notebook_preflight_cell11_commit": "25b56b88ff43728f94e66015ad03374cedf8a973",
+      "archive_manifest_and_environment_commit": "a657738d76c6e56d470eef1bc45a1954a556a665",
+      "notebook_and_zip_error_analysis_identical": true,
+      "notebook_vs_archive_metric_differences": {
+        "small": {
+          "mean_inference_latency_s": {
+            "notebook": 7.240362045600023,
+            "archive": 7.09697300850001
+          },
+          "peak_gpu_allocated_bytes": {
+            "notebook": 9922677248,
+            "archive": 3506724352
+          },
+          "peak_gpu_reserved_bytes": {
+            "notebook": 10896801792,
+            "archive": 4460642304
+          },
+          "tokens_per_second": {
+            "notebook": 19.626090395072765,
+            "archive": 20.022620887779556
+          }
+        },
+        "strong": {
+          "mean_inference_latency_s": {
+            "notebook": 13.876867590300026,
+            "archive": 14.21540438820001
+          },
+          "peak_gpu_allocated_bytes": {
+            "notebook": 10486584320,
+            "archive": 6559726592
+          },
+          "peak_gpu_reserved_bytes": {
+            "notebook": 10628366336,
+            "archive": 6698303488
+          },
+          "tokens_per_second": {
+            "notebook": 11.09760534918172,
+            "archive": 10.83331826478556
+          }
+        }
+      },
+      "interpretation": "Notebook saved aggregate/provenance cells and outputs.zip are not the same complete execution snapshot. The archive manifest and environment agree with each other and with the reference source commit; use the archive records and metrics as the internally validated run. Do not combine the notebook cached latency/VRAM metrics with the archive."
+    }
+  },
+  "original_evaluator_version": "numeric-symbolic-v1",
+  "posthoc_evaluator_version": "numeric-symbolic-v2",
+  "original_metrics_unchanged": {
+    "planned_pair_count": 10,
+    "completed_generation_pair_count": 10,
+    "determinate_pair_count": 6,
+    "unknown_pair_count": 4,
+    "missing_pair_count": 0,
+    "paired_outcome_counts": {
+      "both_correct": 6,
+      "unknown_evaluation": 4
+    },
+    "small": {
+      "accuracy": 1.0,
+      "accuracy_denominator": 9,
+      "attempted_samples": 10,
+      "correct_samples": 9,
+      "determinately_evaluated_samples": 9,
+      "failed_samples": 0,
+      "mean_inference_latency_s": 7.09697300850001,
+      "mean_output_tokens": 142.1,
+      "median_inference_latency_s": 6.442370064000016,
+      "missing_latency_count": 0,
+      "missing_token_count": 0,
+      "not_executed_samples": 0,
+      "p95_inference_latency_s": 14.470358465999993,
+      "peak_gpu_allocated_bytes": 3506724352,
+      "peak_gpu_reserved_bytes": 4460642304,
+      "successful_generations": 10,
+      "throughput_sample_count": 10,
+      "tokens_per_second": 20.022620887779556,
+      "total_output_tokens": 1421,
+      "unknown_evaluation_samples": 1
+    },
+    "strong": {
+      "accuracy": 1.0,
+      "accuracy_denominator": 7,
+      "attempted_samples": 10,
+      "correct_samples": 7,
+      "determinately_evaluated_samples": 7,
+      "failed_samples": 0,
+      "mean_inference_latency_s": 14.21540438820001,
+      "mean_output_tokens": 154,
+      "median_inference_latency_s": 12.771374101499987,
+      "missing_latency_count": 0,
+      "missing_token_count": 0,
+      "not_executed_samples": 0,
+      "p95_inference_latency_s": 22.530652583999995,
+      "peak_gpu_allocated_bytes": 6559726592,
+      "peak_gpu_reserved_bytes": 6698303488,
+      "successful_generations": 10,
+      "throughput_sample_count": 10,
+      "tokens_per_second": 10.83331826478556,
+      "total_output_tokens": 1540,
+      "unknown_evaluation_samples": 3
+    }
+  },
+  "posthoc_metrics": {
+    "small": {
+      "attempted_samples": 10,
+      "successful_generations": 10,
+      "determinately_evaluated_samples": 10,
+      "correct_samples": 10,
+      "accuracy": 1.0,
+      "accuracy_denominator": 10,
+      "mean_inference_latency_s": 7.09697300850001,
+      "median_inference_latency_s": 6.442370064000016,
+      "p95_inference_latency_s": 14.470358465999993,
+      "mean_output_tokens": 142.1,
+      "total_output_tokens": 1421,
+      "peak_gpu_allocated_bytes": 3506724352,
+      "peak_gpu_reserved_bytes": 4460642304,
+      "tokens_per_second": 20.022620887779556,
+      "throughput_sample_count": 10,
+      "missing_latency_count": 0,
+      "missing_token_count": 0,
+      "unknown_evaluation_samples": 0,
+      "failed_samples": 0,
+      "not_executed_samples": 0
+    },
+    "strong": {
+      "attempted_samples": 10,
+      "successful_generations": 10,
+      "determinately_evaluated_samples": 10,
+      "correct_samples": 10,
+      "accuracy": 1.0,
+      "accuracy_denominator": 10,
+      "mean_inference_latency_s": 14.21540438820001,
+      "median_inference_latency_s": 12.771374101499987,
+      "p95_inference_latency_s": 22.530652583999995,
+      "mean_output_tokens": 154,
+      "total_output_tokens": 1540,
+      "peak_gpu_allocated_bytes": 6559726592,
+      "peak_gpu_reserved_bytes": 6698303488,
+      "tokens_per_second": 10.83331826478556,
+      "throughput_sample_count": 10,
+      "missing_latency_count": 0,
+      "missing_token_count": 0,
+      "unknown_evaluation_samples": 0,
+      "failed_samples": 0,
+      "not_executed_samples": 0
+    },
+    "paired": {
+      "planned_pair_count": 10,
+      "completed_generation_pair_count": 10,
+      "determinate_pair_count": 10,
+      "unknown_pair_count": 0,
+      "missing_pair_count": 0,
+      "paired_outcome_counts": {
+        "both_correct": 10
+      }
+    }
+  },
+  "per_record_comparison": [
+    {
+      "tier": "small",
+      "sample_id": "gsm8k-train-000279",
+      "source_record": "small_results.jsonl:1",
+      "reference_answer": "333200",
+      "model_id": "Qwen/Qwen3-1.7B",
+      "model_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "raw_output_sha256": "9e962fee7677c0f5da395bc8dd178034853883c076d8f6ecf1f4c2c1ad2f67b8",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "333200",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "333200",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "small",
+      "sample_id": "gsm8k-train-000288",
+      "source_record": "small_results.jsonl:2",
+      "reference_answer": "18",
+      "model_id": "Qwen/Qwen3-1.7B",
+      "model_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "raw_output_sha256": "acdfe112382c22e5297346a0189b6fdd0ad73c650589441e6d3d26ec7e7cb309",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "18",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "18",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "small",
+      "sample_id": "gsm8k-train-001457",
+      "source_record": "small_results.jsonl:3",
+      "reference_answer": "90",
+      "model_id": "Qwen/Qwen3-1.7B",
+      "model_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "raw_output_sha256": "931c6b26f07fa5fd9eeb74f6dc50665d01a81ad5fa396224f3ff3fda95498b65",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "90",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "90",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "small",
+      "sample_id": "gsm8k-train-002506",
+      "source_record": "small_results.jsonl:4",
+      "reference_answer": "3",
+      "model_id": "Qwen/Qwen3-1.7B",
+      "model_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "raw_output_sha256": "57de9008602bd6028b4cee0ed9d5a3d5aad90f2999547891ee2f17c605fcaa26",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "3",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "3",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "small",
+      "sample_id": "gsm8k-train-002716",
+      "source_record": "small_results.jsonl:5",
+      "reference_answer": "9",
+      "model_id": "Qwen/Qwen3-1.7B",
+      "model_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "raw_output_sha256": "231921469c25278774bfab77ff7862854b5b55a370e9d27dec2f036387cb5551",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "9",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "9",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "small",
+      "sample_id": "gsm8k-train-003336",
+      "source_record": "small_results.jsonl:6",
+      "reference_answer": "86",
+      "model_id": "Qwen/Qwen3-1.7B",
+      "model_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "raw_output_sha256": "60ac58aa2f2fbc6fcbfab3e7d0df83f555a69481b9c609b56e4582c50a43af86",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "86",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "86",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "small",
+      "sample_id": "gsm8k-train-003798",
+      "source_record": "small_results.jsonl:7",
+      "reference_answer": "5",
+      "model_id": "Qwen/Qwen3-1.7B",
+      "model_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "raw_output_sha256": "92aba2a487095c98b12f7884775d6051a9a4d6f35832dfe8262a2cf065fef021",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "unparseable",
+        "extracted_answer": "$5",
+        "is_correct": null,
+        "reason": "malformed_expression"
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "$5",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": true
+    },
+    {
+      "tier": "small",
+      "sample_id": "gsm8k-train-004196",
+      "source_record": "small_results.jsonl:8",
+      "reference_answer": "37",
+      "model_id": "Qwen/Qwen3-1.7B",
+      "model_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "raw_output_sha256": "cbe5b3743f0b7637a74b0d4b6a5b7cef5341820eb9b23380df83ea8d9b9c6612",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "37",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "37",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "small",
+      "sample_id": "gsm8k-train-004440",
+      "source_record": "small_results.jsonl:9",
+      "reference_answer": "13",
+      "model_id": "Qwen/Qwen3-1.7B",
+      "model_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "raw_output_sha256": "bbb0a13b7594102540e1f20cc65fb2d594ded60e1f5c8be9c9357f598eee3553",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "13",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "13",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "small",
+      "sample_id": "gsm8k-train-006450",
+      "source_record": "small_results.jsonl:10",
+      "reference_answer": "7",
+      "model_id": "Qwen/Qwen3-1.7B",
+      "model_revision": "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e",
+      "raw_output_sha256": "f94de290b786700fdbeced84118bab392abd954980d91a0df63e9f08796b3b60",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "7",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "7",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "strong",
+      "sample_id": "gsm8k-train-000279",
+      "source_record": "strong_results.jsonl:1",
+      "reference_answer": "333200",
+      "model_id": "Qwen/Qwen3-8B",
+      "model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+      "raw_output_sha256": "8df86d43a0e33007c27c674ef192fa59dd8c096e8b23bee90cf85f73d2a8567c",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "333200",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "333200",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "strong",
+      "sample_id": "gsm8k-train-000288",
+      "source_record": "strong_results.jsonl:2",
+      "reference_answer": "18",
+      "model_id": "Qwen/Qwen3-8B",
+      "model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+      "raw_output_sha256": "41e4e83815e40651d10d935470a8312e27dc16594396929ca28ef9213305378d",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "unparseable",
+        "extracted_answer": "$18",
+        "is_correct": null,
+        "reason": "malformed_expression"
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "$18",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": true
+    },
+    {
+      "tier": "strong",
+      "sample_id": "gsm8k-train-001457",
+      "source_record": "strong_results.jsonl:3",
+      "reference_answer": "90",
+      "model_id": "Qwen/Qwen3-8B",
+      "model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+      "raw_output_sha256": "dd4b2222b2c2c2f5d6ddb3c4f5989a42ef1f42177689a5b54c3d96d1f971b3fb",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "90",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "90",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "strong",
+      "sample_id": "gsm8k-train-002506",
+      "source_record": "strong_results.jsonl:4",
+      "reference_answer": "3",
+      "model_id": "Qwen/Qwen3-8B",
+      "model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+      "raw_output_sha256": "203179a3acebe9c0134f3208da7b9171831446998fcea9712f071394bf58f427",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "3",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "3",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "strong",
+      "sample_id": "gsm8k-train-002716",
+      "source_record": "strong_results.jsonl:5",
+      "reference_answer": "9",
+      "model_id": "Qwen/Qwen3-8B",
+      "model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+      "raw_output_sha256": "281e2ff631f331bbcb1892420aa2ebb3bed47ddc61476b5646915f0a636619aa",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "9",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "9",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "strong",
+      "sample_id": "gsm8k-train-003336",
+      "source_record": "strong_results.jsonl:6",
+      "reference_answer": "86",
+      "model_id": "Qwen/Qwen3-8B",
+      "model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+      "raw_output_sha256": "2990074ed115dce45eb92b0525c7775f70b251c410169c8302aa5dd987d5995b",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "unparseable",
+        "extracted_answer": null,
+        "is_correct": null,
+        "reason": "missing_final_answer_delimiter"
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "86",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": true
+    },
+    {
+      "tier": "strong",
+      "sample_id": "gsm8k-train-003798",
+      "source_record": "strong_results.jsonl:7",
+      "reference_answer": "5",
+      "model_id": "Qwen/Qwen3-8B",
+      "model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+      "raw_output_sha256": "e66d893e62f024d790a50d7fc01ba18929d09b0954ce2980fb479f25006df574",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "5",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "5",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "strong",
+      "sample_id": "gsm8k-train-004196",
+      "source_record": "strong_results.jsonl:8",
+      "reference_answer": "37",
+      "model_id": "Qwen/Qwen3-8B",
+      "model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+      "raw_output_sha256": "1895c4f462e7076ca2ef0cd8b8c2e1bd58da6ea3a2a445f8d9394c265cccdf83",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "37",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "37",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "strong",
+      "sample_id": "gsm8k-train-004440",
+      "source_record": "strong_results.jsonl:9",
+      "reference_answer": "13",
+      "model_id": "Qwen/Qwen3-8B",
+      "model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+      "raw_output_sha256": "1b48247fbf21bae09ede63e0933c5d756e769d97e699609e99fac5d4832bd98f",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "correct",
+        "extracted_answer": "13",
+        "is_correct": true,
+        "reason": null
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "13",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": false
+    },
+    {
+      "tier": "strong",
+      "sample_id": "gsm8k-train-006450",
+      "source_record": "strong_results.jsonl:10",
+      "reference_answer": "7",
+      "model_id": "Qwen/Qwen3-8B",
+      "model_revision": "b968826d9c46dd6066d109eabc6255188de91218",
+      "raw_output_sha256": "6754331df1ceb14dd2afb7bf31549cb864c7eb9c268bf781340c9be1c899e5ae",
+      "original_evaluation": {
+        "evaluator_version": "numeric-symbolic-v1",
+        "status": "unparseable",
+        "extracted_answer": null,
+        "is_correct": null,
+        "reason": "missing_final_answer_delimiter"
+      },
+      "posthoc_evaluation": {
+        "evaluator_version": "numeric-symbolic-v2",
+        "status": "correct",
+        "extracted_answer": "7",
+        "is_correct": true,
+        "reason": null
+      },
+      "semantic_result_changed": true
+    }
+  ],
+  "paired_comparison": [
+    {
+      "sample_id": "gsm8k-train-000279",
+      "original_outcome": "both_correct",
+      "posthoc_outcome": "both_correct",
+      "small_original_status": "correct",
+      "small_posthoc_status": "correct",
+      "strong_original_status": "correct",
+      "strong_posthoc_status": "correct"
+    },
+    {
+      "sample_id": "gsm8k-train-000288",
+      "original_outcome": "unknown_evaluation",
+      "posthoc_outcome": "both_correct",
+      "small_original_status": "correct",
+      "small_posthoc_status": "correct",
+      "strong_original_status": "unparseable",
+      "strong_posthoc_status": "correct"
+    },
+    {
+      "sample_id": "gsm8k-train-001457",
+      "original_outcome": "both_correct",
+      "posthoc_outcome": "both_correct",
+      "small_original_status": "correct",
+      "small_posthoc_status": "correct",
+      "strong_original_status": "correct",
+      "strong_posthoc_status": "correct"
+    },
+    {
+      "sample_id": "gsm8k-train-002506",
+      "original_outcome": "both_correct",
+      "posthoc_outcome": "both_correct",
+      "small_original_status": "correct",
+      "small_posthoc_status": "correct",
+      "strong_original_status": "correct",
+      "strong_posthoc_status": "correct"
+    },
+    {
+      "sample_id": "gsm8k-train-002716",
+      "original_outcome": "both_correct",
+      "posthoc_outcome": "both_correct",
+      "small_original_status": "correct",
+      "small_posthoc_status": "correct",
+      "strong_original_status": "correct",
+      "strong_posthoc_status": "correct"
+    },
+    {
+      "sample_id": "gsm8k-train-003336",
+      "original_outcome": "unknown_evaluation",
+      "posthoc_outcome": "both_correct",
+      "small_original_status": "correct",
+      "small_posthoc_status": "correct",
+      "strong_original_status": "unparseable",
+      "strong_posthoc_status": "correct"
+    },
+    {
+      "sample_id": "gsm8k-train-003798",
+      "original_outcome": "unknown_evaluation",
+      "posthoc_outcome": "both_correct",
+      "small_original_status": "unparseable",
+      "small_posthoc_status": "correct",
+      "strong_original_status": "correct",
+      "strong_posthoc_status": "correct"
+    },
+    {
+      "sample_id": "gsm8k-train-004196",
+      "original_outcome": "both_correct",
+      "posthoc_outcome": "both_correct",
+      "small_original_status": "correct",
+      "small_posthoc_status": "correct",
+      "strong_original_status": "correct",
+      "strong_posthoc_status": "correct"
+    },
+    {
+      "sample_id": "gsm8k-train-004440",
+      "original_outcome": "both_correct",
+      "posthoc_outcome": "both_correct",
+      "small_original_status": "correct",
+      "small_posthoc_status": "correct",
+      "strong_original_status": "correct",
+      "strong_posthoc_status": "correct"
+    },
+    {
+      "sample_id": "gsm8k-train-006450",
+      "original_outcome": "unknown_evaluation",
+      "posthoc_outcome": "both_correct",
+      "small_original_status": "correct",
+      "small_posthoc_status": "correct",
+      "strong_original_status": "unparseable",
+      "strong_posthoc_status": "correct"
+    }
+  ]
+}

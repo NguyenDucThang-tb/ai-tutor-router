@@ -47,6 +47,10 @@ def _strip_simple_wrappers(value: str) -> str:
     candidate = value.strip()
     if candidate.startswith("$") and candidate.endswith("$") and len(candidate) >= 2:
         candidate = candidate[1:-1].strip()
+    elif re.match(r"^\$\s*(?=[+-]?(?:\d|\.\d))", candidate):
+        # Accept an unpaired leading dollar sign as a currency prefix, but only
+        # when the remaining answer begins with a numeric literal.
+        candidate = re.sub(r"^\$\s*", "", candidate, count=1)
     if candidate.startswith(r"\(") and candidate.endswith(r"\)"):
         candidate = candidate[2:-2].strip()
     boxed = re.fullmatch(r"\\boxed\s*\{(.*)\}", candidate, flags=re.DOTALL)

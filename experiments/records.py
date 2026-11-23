@@ -42,7 +42,7 @@ class ExperimentRecord(BaseModel):
     router_selected_tier: str | None = None
     prompt_version: str
     prompt_sha256: str
-    evaluator_version: str = "numeric-symbolic-v1"
+    evaluator_version: str = "numeric-symbolic-v2"
     provider: str
     fallback_policy: str = "disabled"
     execution_mode: Literal["mock", "real", "replay"]

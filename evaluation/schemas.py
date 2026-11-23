@@ -16,7 +16,7 @@ class EvaluationStatus(StrEnum):
 class EvaluationResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    evaluator_version: str = "numeric-symbolic-v1"
+    evaluator_version: str = "numeric-symbolic-v2"
     status: EvaluationStatus
     is_correct: bool | None
     extracted_answer: str | None = None

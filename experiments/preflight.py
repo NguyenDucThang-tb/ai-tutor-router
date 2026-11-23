@@ -248,7 +248,7 @@ def make_report(
             "paid fallback configuration lacks explicit retry approval",
         )
     _check(checks, "PASS", "frozen_prompt", f"{config.temperature=}; prompt sha256={PROMPT_SHA256}")
-    _check(checks, "PASS", "evaluator", "numeric-symbolic-v1")
+    _check(checks, "PASS", "evaluator", "numeric-symbolic-v2")
     _check(
         checks,
         "PASS",

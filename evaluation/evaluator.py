@@ -9,7 +9,7 @@ from evaluation.symbolic import (
     expressions_equivalent,
 )
 
-EVALUATOR_VERSION = "numeric-symbolic-v1"
+EVALUATOR_VERSION = "numeric-symbolic-v2"
 
 
 def evaluate_answer(model_output: str, reference_answer: str) -> EvaluationResult:
