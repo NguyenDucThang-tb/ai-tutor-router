@@ -1,3 +1,4 @@
+import ast
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -6,6 +7,9 @@ import pytest
 
 from experiments.kaggle_local import (
     LOCAL_RECORD_SCHEMA,
+    PILOT_DATASET_SHA256,
+    PILOT_PLAN_SHA256,
+    PILOT_SAMPLE_IDS_SHA256,
     evaluate_records,
     execute_samples,
     model_metrics,
@@ -21,6 +25,34 @@ from experiments.kaggle_local import (
 
 def sample(sample_id: str, reference: str = "7"):
     return SimpleNamespace(sample_id=sample_id, reference_answer=reference, question="What is 3+4?")
+
+
+def _literal_bool_assignment(sources, variable):
+    """Require one direct, literal Boolean assignment across notebook code cells."""
+    trees = [ast.parse(source) for source in sources]
+    bindings = [
+        node
+        for tree in trees
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and node.id == variable
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ]
+    if len(bindings) != 1 or not isinstance(bindings[0].ctx, ast.Store):
+        raise ValueError(f"{variable} must have exactly one assignment")
+    binding = bindings[0]
+    assignments = [
+        node
+        for tree in trees
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and node.targets[0] is binding
+    ]
+    if len(assignments) != 1:
+        raise ValueError(f"{variable} must use one direct assignment")
+    value = assignments[0].value
+    if not isinstance(value, ast.Constant) or type(value.value) is not bool:
+        raise ValueError(f"{variable} must be assigned a literal Boolean")
+    return value.value
 
 
 def record(sample_id: str, *, correct: bool | None, status: str = "completed"):
@@ -542,8 +574,134 @@ def test_notebook_is_valid_json_and_has_sixteen_ordered_sections():
     assert [
         heading for heading in headings if any(heading in cell for cell in markdown)
     ] == headings
+    code_sources = [
+        "".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code"
+    ]
     source = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
-    assert "RUN_FULL_PILOT = False" in source
+    trees = [ast.parse(cell_source) for cell_source in code_sources]
+
+    # Both explicit settings are valid; absent, duplicate, non-Boolean, and
+    # dynamically computed settings must fail the structural check.
+    assert _literal_bool_assignment(["RUN_FULL_PILOT = False"], "RUN_FULL_PILOT") is False
+    assert _literal_bool_assignment(["RUN_FULL_PILOT = True"], "RUN_FULL_PILOT") is True
+    for invalid_source in (
+        "",
+        "RUN_FULL_PILOT = True\nRUN_FULL_PILOT = False",
+        "RUN_FULL_PILOT = 1",
+        "RUN_FULL_PILOT = bool(config_value)",
+    ):
+        with pytest.raises(ValueError):
+            _literal_bool_assignment([invalid_source], "RUN_FULL_PILOT")
+    assert type(_literal_bool_assignment(code_sources, "RUN_FULL_PILOT")) is bool
+    assert type(_literal_bool_assignment(code_sources, "SMOKE_TESTS_CONFIRMED")) is bool
+
+    full_run_gates = [
+        node
+        for tree in trees
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "RUN_FULL_PILOT"
+        and any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id == "read_records"
+            for child in ast.walk(node)
+        )
+    ]
+    assert len(full_run_gates) == 1
+    full_gate = full_run_gates[0]
+    assert any(
+        isinstance(node, ast.If)
+        and isinstance(node.test, ast.UnaryOp)
+        and isinstance(node.test.op, ast.Not)
+        and isinstance(node.test.operand, ast.Name)
+        and node.test.operand.id == "SMOKE_TESTS_CONFIRMED"
+        and any(isinstance(child, ast.Raise) for child in ast.walk(node))
+        for node in ast.walk(full_gate)
+    )
+    smoke_loop = next(
+        node
+        for node in ast.walk(full_gate)
+        if isinstance(node, ast.For)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "model_name"
+    )
+    assert [item.value for item in smoke_loop.iter.elts] == ["small", "strong"]
+    smoke_guard = next(
+        node
+        for node in ast.walk(smoke_loop)
+        if isinstance(node, ast.If)
+        and "smoke_records" in ast.dump(node.test)
+        and any(isinstance(child, ast.Raise) for child in ast.walk(node))
+    )
+    assert "completed" in ast.dump(smoke_guard.test)
+    assert "len" in ast.dump(smoke_guard.test)
+    assert "_smoke.jsonl" in ast.unparse(smoke_loop)
+
+    # Persisted generation policy must remain no-retry/no-fallback, and this
+    # notebook must stay on local Transformers rather than a paid API client.
+    policy_dicts = [node for tree in trees for node in ast.walk(tree) if isinstance(node, ast.Dict)]
+    assert any(
+        {
+            key.value: value.value
+            for key, value in zip(node.keys, node.values)
+            if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+        }.get("retry")
+        is False
+        and {
+            key.value: value.value
+            for key, value in zip(node.keys, node.values)
+            if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
+        }.get("fallback")
+        is False
+        for node in policy_dicts
+    )
+    imports = [
+        alias.name.split(".")[0]
+        for tree in trees
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    ] + [
+        node.module.split(".")[0]
+        for tree in trees
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
+    ]
+    assert not {"litellm", "openai"}.intersection(imports)
+    assert '"provider": "local_transformers"' in source
+
+    def constant_assignment(name):
+        assignments = [
+            node
+            for tree in trees
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == name
+        ]
+        assert len(assignments) == 1
+        assert isinstance(assignments[0].value, ast.Constant)
+        return assignments[0].value.value
+
+    assert constant_assignment("SMALL_MODEL_ID") == "Qwen/Qwen3-1.7B"
+    assert constant_assignment("STRONG_MODEL_ID") == "Qwen/Qwen3-8B"
+    assert constant_assignment("SMALL_MODEL_REVISION") == "70d244cc86ccca08cf5af4e1e306ecf908b1ad5e"
+    assert (
+        constant_assignment("STRONG_MODEL_REVISION") == "b968826d9c46dd6066d109eabc6255188de91218"
+    )
+    assert PILOT_PLAN_SHA256 == "1d5065acc16b50c1521422ec2a912ed28a10bd483d905054fbdd24aefd642493"
+    assert (
+        PILOT_SAMPLE_IDS_SHA256
+        == "077275a61e532506eab2d10c09d36960976253969380ca256af7b95cbcced5ed"
+    )
+    assert (
+        PILOT_DATASET_SHA256 == "aa75c686332c09e12ce6412571b32b7efae779dfc8696d3448b29a45e5542e4b"
+    )
+    assert "load_frozen_pilot" in source
+    assert "collection_plan_sha256" in source and "dataset_content_sha256" in source
     assert "official test" in source.lower()
     assert "enable_thinking=False" in source
     assert "do_sample=False" in source
