@@ -59,6 +59,38 @@ Primary generation settings: batch size 1, maximum 1,024 input tokens, maximum 5
 9. In CELL 7, set `SMOKE_TESTS_CONFIRMED = True` only after inspecting both smoke outputs, then set `RUN_FULL_PILOT = True`. Run all cells to execute the same ten planned IDs with both models. These flags default to false; running the notebook as committed does not invoke either model.
 10. Download `/kaggle/working/outputs.zip` after export. Keep the notebook outputs and run manifest with the archive for provenance.
 
+## Normalizing after Kaggle Save Version
+
+Kaggle's GitHub integration can commit notebook JSON directly, without running
+the repository's pinned Ruff formatter first. The current CI is read-only and
+has no Kaggle synchronization workflow, so it cannot safely amend that incoming
+commit. After Kaggle Save Version pushes the notebook, normalize the latest
+branch commit locally:
+
+```bash
+git fetch origin
+git switch experiments/kaggle-t4-qwen3-pilot
+git merge --ff-only origin/experiments/kaggle-t4-qwen3-pilot
+uv run python scripts/normalize_kaggle_notebook.py experiments/notebooks/kaggle_t4_qwen3_gsm8k.ipynb
+git diff --check
+uv run ruff check experiments/notebooks/kaggle_t4_qwen3_gsm8k.ipynb
+uv run ruff format --check experiments/notebooks/kaggle_t4_qwen3_gsm8k.ipynb
+git diff -- experiments/notebooks/kaggle_t4_qwen3_gsm8k.ipynb
+```
+
+The script uses the Ruff version pinned in `uv.lock`, formats a temporary copy,
+and writes atomically only after validating that notebook metadata, cell layout,
+outputs, execution counts and all non-source fields are unchanged. It also
+requires Markdown/raw cell source to remain unchanged and checks Python AST
+equivalence for changed code cells. It refuses to replace the notebook if the
+local file changes while formatting; it never executes cells.
+
+Review the notebook diff, then commit only that notebook and push normally. If a
+new Kaggle commit arrives during normalization, a normal push will reject the
+stale update. Fetch and fast-forward to the new remote head, rerun normalization,
+review the new diff, and retry. Never force-push. This manual post-push path
+avoids a write-enabled GitHub bot racing with Kaggle or creating commit loops.
+
 The 1.7B FP16 weights and 8B NF4 model may fit on a 16 GB T4, but actual activation/KV cache, allocator fragmentation, library version, and available GPU memory affect loading and generation. A generation OOM is recorded as failed, clears reclaimable CUDA cache, and cannot produce a completed-pilot status. A model-load/quantization error stops the cell with its original error. If resources are insufficient, first restart the session and verify GPU memory is free. A lower `max_new_tokens` or input limit can be explored only as a separately labeled protocol/run; it must not be substituted silently for this primary pilot.
 
 The repository environment does not include Kaggle's CUDA image or a T4, so model-runtime compatibility on Kaggle, Qwen model loading, NF4 kernel execution, and GPU memory behavior are **NOT_RUN** here. The notebook's runtime dependency imports and config construction are checks to be run on Kaggle; passing local unit tests or CI is not evidence that Kaggle inference works.
@@ -87,6 +119,7 @@ The displayed scientific status is evidence-based: `NOTEBOOK_READY_FOR_KAGGLE` w
 
 - Outputs are from local `transformers` inference, not the commercial provider path.
 - They are explicitly not Phase 3A `scientific_eligible` records and are not accepted by the existing real-provider exporter.
-- No inference results are embedded in the notebook or documentation.
+- Saved Kaggle inference outputs remain attached to the notebook when present;
+  the downloadable result archive is also retained separately for analysis.
 - `NOTEBOOK_READY_FOR_KAGGLE` is the repository status. Use `KAGGLE_SMOKE_PASSED` or `KAGGLE_PILOT_COMPLETED` only after actual Kaggle GPU evidence is saved and reviewed.
 - GSM8K contains only ten samples in this frozen pilot; error categories require human review, and no statistical generalization is justified.
